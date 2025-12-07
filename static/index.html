@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebKin - Kinematic Tree Visualizer</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #1a1a2e;
+            color: #eee;
+            overflow: hidden;
+        }
+
+        #container {
+            width: 100vw;
+            height: 100vh;
+        }
+
+        #info {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 15px;
+            border-radius: 8px;
+            font-size: 14px;
+            max-width: 300px;
+        }
+
+        #info h1 {
+            font-size: 18px;
+            margin-bottom: 10px;
+            color: #4fc3f7;
+        }
+
+        #controls {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 15px;
+            border-radius: 8px;
+            min-width: 250px;
+        }
+
+        #controls h2 {
+            font-size: 14px;
+            margin-bottom: 10px;
+            color: #4fc3f7;
+        }
+
+        .slider-group {
+            margin-bottom: 12px;
+        }
+
+        .slider-group label {
+            display: block;
+            margin-bottom: 4px;
+            font-size: 12px;
+        }
+
+        .slider-group input[type="range"] {
+            width: 100%;
+        }
+
+        .slider-value {
+            font-size: 11px;
+            color: #888;
+        }
+
+        #status {
+            position: absolute;
+            bottom: 10px;
+            left: 10px;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 8px 12px;
+            border-radius: 4px;
+            font-size: 12px;
+        }
+
+        .status-connected { color: #4caf50; }
+        .status-disconnected { color: #f44336; }
+
+        .mode-toggle {
+            margin-bottom: 15px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid #444;
+        }
+
+        .mode-toggle label {
+            display: flex;
+            align-items: center;
+            cursor: pointer;
+            font-size: 13px;
+        }
+
+        .mode-toggle input {
+            margin-right: 8px;
+            cursor: pointer;
+        }
+
+        .mode-server { color: #4fc3f7; }
+        .mode-local { color: #ffb74d; }
+
+        #joint-sliders.disabled {
+            opacity: 0.4;
+            pointer-events: none;
+        }
+    </style>
+</head>
+<body>
+    <div id="container"></div>
+
+    <div id="info">
+        <h1>WebKin</h1>
+        <p>Kinematic Tree Visualizer</p>
+        <p style="margin-top: 10px; font-size: 12px; color: #888;">
+            Mouse: rotate | Scroll: zoom | Shift+Mouse: pan
+        </p>
+    </div>
+
+    <div id="controls">
+        <h2>Joint Controls</h2>
+        <div class="mode-toggle">
+            <label>
+                <input type="checkbox" id="manual-mode">
+                <span id="mode-label" class="mode-server">Server control</span>
+            </label>
+        </div>
+        <div id="joint-sliders" class="disabled">
+            <!-- Sliders will be generated here -->
+        </div>
+    </div>
+
+    <div id="status">
+        WebSocket: <span id="ws-status" class="status-disconnected">disconnected</span>
+    </div>
+
+    <!-- Three.js from CDN -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/STLLoader.js"></script>
+
+    <script src="/static/kinematic.js"></script>
+    <script src="/static/app.js"></script>
+</body>
+</html>

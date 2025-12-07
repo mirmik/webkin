@@ -1,0 +1,91 @@
+{
+    "name": "robot_base",
+    "type": "transform",
+    "pose": {
+        "position": [1, 0, 0],
+        "orientation": [0, 0, 0, 1]
+    },
+    "model": { "type": "cylinder", "radius": 50, "height": 20 },
+    "children": [
+        {
+            "name": "shoulder_yaw",
+            "type": "rotator",
+            "pose": {
+                "position": [0, 15, 0],
+                "orientation": [0, 0, 0, 1]
+            },
+            "axis": [0, 1, 0],
+            "model": { "type": "cylinder", "radius": 20, "height": 40 },
+            "children": [
+                {
+                    "name": "shoulder_pitch",
+                    "type": "rotator",
+                    "pose": {
+                        "position": [0, 30, 0],
+                        "orientation": [0.707, 0, 0, 0.707]
+                    },
+                    "axis": [0, 0, 1],
+                    "model": { "type": "sphere", "radius": 18 },
+                    "children": [
+                        {
+                            "name": "upper_arm",
+                            "type": "transform",
+                            "pose": {
+                                "position": [0, 50, 0],
+                                "orientation": [0, 0, 0, 1]
+                            },
+                            "model": { "type": "cube", "size": [20, 100, 20] },
+                            "children": [
+                                {
+                                    "name": "elbow",
+                                    "type": "rotator",
+                                    "pose": {
+                                        "position": [0, 60, 0],
+                                        "orientation": [0, 0, 0, 1]
+                                    },
+                                    "axis": [0, 0, 1],
+                                    "model": { "type": "sphere", "radius": 15 },
+                                    "children": [
+                                        {
+                                            "name": "forearm",
+                                            "type": "transform",
+                                            "pose": {
+                                                "position": [0, 40, 0],
+                                                "orientation": [0, 0, 0, 1]
+                                            },
+                                            "model": { "type": "cube", "size": [15, 80, 15] },
+                                            "children": [
+                                                {
+                                                    "name": "wrist",
+                                                    "type": "rotator",
+                                                    "pose": {
+                                                        "position": [0, 50, 0],
+                                                        "orientation": [0, 0, 0, 1]
+                                                    },
+                                                    "axis": [0, 1, 0],
+                                                    "model": { "type": "sphere", "radius": 12 },
+                                                    "children": [
+                                                        {
+                                                            "name": "end_effector",
+                                                            "type": "transform",
+                                                            "pose": {
+                                                                "position": [0, 20, 0],
+                                                                "orientation": [0, 0, 0, 1]
+                                                            },
+                                                            "model": { "type": "stl", "path": "bulbasaur.stl", "scale": 0.3, "rotation": [-90, 0, 0] },
+                                                            "children": []
+                                                        }
+                                                    ]
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        }
+    ]
+}
