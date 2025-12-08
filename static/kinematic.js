@@ -140,12 +140,18 @@ class KinematicScene {
     }
 
     initFromSceneData(sceneData) {
+        const nodeNames = Object.keys(sceneData);
+        console.log(`initFromSceneData: creating ${nodeNames.length} nodes:`, nodeNames);
+
         // Create nodes from scene data
         for (const [name, data] of Object.entries(sceneData)) {
             if (!this.nodes[name]) {
                 const node = new SceneNode(name, data.model);
                 this.nodes[name] = node;
                 this.scene.add(node.group);
+                console.log(`  Created: ${name}`);
+            } else {
+                console.log(`  Already exists: ${name}`);
             }
             // Apply initial pose
             if (data.pose) {
@@ -153,7 +159,7 @@ class KinematicScene {
             }
         }
 
-        console.log(`Scene initialized with ${Object.keys(this.nodes).length} nodes`);
+        console.log(`Scene now has ${Object.keys(this.nodes).length} nodes`);
     }
 
     setTreeData(data) {
@@ -193,25 +199,25 @@ class KinematicScene {
     }
 
     _computePoses(node, parentPose) {
-        // Compose parent * local
+        // Compose parent * local * joint
+        // Joint transform is included so the node's visual moves/rotates with the joint
         const localPose = node.pose || { position: [0,0,0], orientation: [0,0,0,1] };
-        const globalPose = this._composePoses(parentPose, localPose);
+        let globalPose = this._composePoses(parentPose, localPose);
+
+        // Apply joint transform to this node's pose (not just children)
+        if (node.type === 'rotator' || node.type === 'actuator') {
+            const jointTransform = this._getJointTransform(node);
+            globalPose = this._composePoses(globalPose, jointTransform);
+        }
 
         // Apply to scene node
         if (this.nodes[node.name]) {
             this.nodes[node.name].setPose(globalPose);
         }
 
-        // Compute child parent pose (with joint transform)
-        let childParentPose = globalPose;
-        if (node.type === 'rotator' || node.type === 'actuator') {
-            const jointTransform = this._getJointTransform(node);
-            childParentPose = this._composePoses(globalPose, jointTransform);
-        }
-
-        // Recurse children
+        // Recurse children (they inherit parent's full transform including joint)
         for (const child of (node.children || [])) {
-            this._computePoses(child, childParentPose);
+            this._computePoses(child, globalPose);
         }
     }
 
@@ -266,9 +272,37 @@ class KinematicScene {
     }
 
     clear() {
-        for (const node of Object.values(this.nodes)) {
+        console.log(`Clearing scene, removing ${Object.keys(this.nodes).length} tracked nodes`);
+
+        // Remove all tracked nodes
+        for (const [name, node] of Object.entries(this.nodes)) {
             this.scene.remove(node.group);
+
+            // Dispose geometries and materials to free memory
+            if (node.mesh) {
+                if (node.mesh.geometry) node.mesh.geometry.dispose();
+                if (node.mesh.material) node.mesh.material.dispose();
+            }
+            console.log(`  Removed tracked: ${name}`);
         }
+
+        // Also remove any stray Group objects (in case of race conditions)
+        const toRemove = [];
+        for (const child of this.scene.children) {
+            // Keep lights, helpers, etc. - only remove Groups with names
+            if (child.isGroup && child.name) {
+                toRemove.push(child);
+            }
+        }
+        for (const obj of toRemove) {
+            console.log(`  Removed stray: ${obj.name}`);
+            this.scene.remove(obj);
+        }
+
         this.nodes = {};
+        this.treeData = null;
+        this.jointCoords = {};
+
+        console.log(`Scene children remaining: ${this.scene.children.length}`);
     }
 }

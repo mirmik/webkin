@@ -142,20 +142,32 @@ function connectWebSocket() {
 }
 
 function handleMessage(message) {
+    console.log(`Received message: ${message.type}`);
+
     switch (message.type) {
         case 'scene_init':
+            console.log('=== SCENE_INIT received ===');
+            console.log('Joints:', message.joints);
+            console.log('Nodes:', Object.keys(message.nodes));
+
+            // Clear existing scene (for dynamic tree reload)
+            kinematicScene.clear();
+
             // Initial scene setup
             kinematicScene.initFromSceneData(message.nodes);
             jointNames = message.joints || [];
             createJointSliders(jointNames);
+
+            // Reload tree data for local calculations
+            loadTreeData();
+
+            console.log('=== SCENE_INIT complete ===');
             break;
 
         case 'scene_update':
             // Update poses from server (only if not in manual mode)
             if (!manualMode) {
                 kinematicScene.updateFromSceneData(message.nodes);
-            } else {
-                console.log('Ignoring server update (manual mode)');
             }
             break;
     }

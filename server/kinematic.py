@@ -136,13 +136,11 @@ class KinematicNode:
             parent_pose = Pose()
 
         # Global = parent * local * joint
-        self.global_pose = parent_pose * self.local_pose
-
-        # For joints, children are affected by joint transform
-        child_parent_pose = self.global_pose * self.get_joint_transform()
+        # Joint transform is included so the node's visual moves/rotates with the joint
+        self.global_pose = parent_pose * self.local_pose * self.get_joint_transform()
 
         for child in self.children:
-            child.compute_global_poses(child_parent_pose)
+            child.compute_global_poses(self.global_pose)
 
     def get_all_poses(self) -> dict:
         """Get dictionary of all node poses {name: pose}"""
