@@ -18,6 +18,9 @@ from .kinematic import KinematicTree
 
 
 # Configuration
+TRANSPORT_TYPE = os.environ.get("TRANSPORT_TYPE", "mqtt")  # "mqtt" or "crow"
+
+# MQTT configuration
 MQTT_BROKER = os.environ.get("MQTT_BROKER", "localhost")
 MQTT_PORT = int(os.environ.get("MQTT_PORT", "1883"))
 MQTT_TOPIC = os.environ.get("MQTT_TOPIC", "robot/joints")
@@ -132,21 +135,54 @@ async def mqtt_listener():
             await asyncio.sleep(5)
 
 
+async def handle_tree_update(payload: dict):
+    """Handle incoming kinematic tree from transport"""
+    global tree_data_json
+    print(f"Received kinematic tree: {payload.get('name', 'unnamed')}")
+    tree_data_json = payload
+    tree.load(payload)
+    print(f"Loaded tree with joints: {tree.get_joint_names()}")
+    await broadcast_scene_init()
+
+
+async def handle_joints_update(payload: dict):
+    """Handle incoming joint positions from transport"""
+    joints = payload.get("joints", {})
+    if joints:
+        tree.set_joint_coords(joints)
+        tree.update()
+        await broadcast_scene()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup and shutdown events"""
     global mqtt_task, tree_data_json
 
-    # Load fallback tree from file (will be replaced by MQTT tree if available)
+    # Load fallback tree from file (will be replaced by transport tree if available)
     tree_file = STATIC_DIR / "example_tree.json"
     if tree_file.exists():
         tree_data_json = json.loads(tree_file.read_text())
         tree.load(tree_data_json)
         print(f"Loaded fallback tree with joints: {tree.get_joint_names()}")
-        print("Waiting for kinematic tree from MQTT (robot/joints/tree)...")
 
-    # Start MQTT listener
-    mqtt_task = asyncio.create_task(mqtt_listener())
+    # Start transport listener based on configuration
+    if TRANSPORT_TYPE == "crow":
+        print("Using Crow transport")
+        print("Waiting for kinematic tree from Crow (robot/joints/tree)...")
+        from .crow_listener import crow_listener
+        mqtt_task = asyncio.create_task(
+            crow_listener(
+                on_tree=lambda p: asyncio.create_task(handle_tree_update(p)),
+                on_joints=lambda p: asyncio.create_task(handle_joints_update(p)),
+                joints_topic=MQTT_TOPIC,
+                tree_topic=MQTT_TREE_TOPIC,
+            )
+        )
+    else:
+        print("Using MQTT transport")
+        print("Waiting for kinematic tree from MQTT (robot/joints/tree)...")
+        mqtt_task = asyncio.create_task(mqtt_listener())
 
     yield
 
