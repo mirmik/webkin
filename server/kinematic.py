@@ -5,7 +5,7 @@ Kinematic Tree - Server-side calculations
 import math
 import json
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Optional, List, Dict
 
 
 @dataclass
@@ -89,7 +89,7 @@ class KinematicNode:
         self.name = data.get("name", "unnamed")
         self.type = data.get("type", "transform")
         self.parent = parent
-        self.children: list[KinematicNode] = []
+        self.children: List["KinematicNode"] = []
 
         # Local pose (from JSON)
         pose_data = data.get("pose", {})
@@ -170,7 +170,7 @@ class KinematicNode:
                 return found
         return None
 
-    def get_all_joints(self) -> list["KinematicNode"]:
+    def get_all_joints(self) -> List["KinematicNode"]:
         """Get all joint nodes (rotator/actuator)"""
         joints = []
         if self.type in ("rotator", "actuator"):
@@ -183,7 +183,7 @@ class KinematicNode:
 class KinematicTree:
     def __init__(self):
         self.root: Optional[KinematicNode] = None
-        self.joints: dict[str, KinematicNode] = {}
+        self.joints: Dict[str, KinematicNode] = {}
 
     def load(self, data: dict):
         """Load tree from JSON data"""
@@ -191,7 +191,7 @@ class KinematicTree:
         self.joints = {j.name: j for j in self.root.get_all_joints()}
         self.update()
 
-    def set_joint_coords(self, coords: dict[str, float]):
+    def set_joint_coords(self, coords: Dict[str, float]):
         """Set multiple joint coordinates"""
         for name, value in coords.items():
             if name in self.joints:
@@ -208,6 +208,6 @@ class KinematicTree:
             return self.root.get_scene_data()
         return {}
 
-    def get_joint_names(self) -> list[str]:
+    def get_joint_names(self) -> List[str]:
         """Get list of joint names"""
         return list(self.joints.keys())

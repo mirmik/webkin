@@ -7,7 +7,7 @@ import zipfile
 import tempfile
 import shutil
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Union
 
 
 class K3DLoader:
@@ -20,7 +20,7 @@ class K3DLoader:
         self.camera_pose: Optional[dict] = None
         self._temp_dir: Optional[Path] = None
 
-    def load_file(self, k3d_path: str | Path) -> dict:
+    def load_file(self, k3d_path: Union[str, Path]) -> dict:
         """
         Load a .k3d file and extract its contents.
         Returns the kinematic tree in webkin format.
@@ -62,7 +62,7 @@ class K3DLoader:
 
         return self.tree_data
 
-    def load_directory(self, dir_path: str | Path) -> dict:
+    def load_directory(self, dir_path: Union[str, Path]) -> dict:
         """
         Load from an already extracted directory containing k3d.json and STL files.
 

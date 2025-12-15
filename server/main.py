@@ -10,6 +10,8 @@ import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+from typing import List, Dict, Optional
+
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
@@ -37,9 +39,9 @@ STATIC_DIR = BASE_DIR / "static"
 # Global state
 tree = KinematicTree()
 tree_data_json: dict = {}  # Store raw tree data for /api/tree endpoint
-clients: list[WebSocket] = []
+clients: List[WebSocket] = []
 mqtt_task = None
-k3d_loader: K3DLoader | None = None  # Current loaded k3d file
+k3d_loader: Optional[K3DLoader] = None  # Current loaded k3d file
 
 
 async def broadcast_scene():
@@ -284,7 +286,7 @@ async def get_scene():
 
 
 @app.post("/api/joints")
-async def set_joints(joints: dict[str, float]):
+async def set_joints(joints: Dict[str, float]):
     """Set joint coordinates via REST API"""
     tree.set_joint_coords(joints)
     tree.update()
