@@ -191,7 +191,9 @@ async def lifespan(app: FastAPI):
             print(f"Loaded fallback tree with joints: {tree.get_joint_names()}")
 
     # Start transport listener based on configuration
-    if TRANSPORT_TYPE == "crow":
+    if TRANSPORT_TYPE == "none":
+        print("Transport disabled (TRANSPORT_TYPE=none)")
+    elif TRANSPORT_TYPE == "crow":
         print("Using Crow transport")
         print("Waiting for kinematic tree from Crow (robot/joints/tree)...")
         from .crow_listener import crow_listener
