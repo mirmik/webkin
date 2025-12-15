@@ -55,7 +55,12 @@ class SceneNode {
                 material.visible = false;
                 break;
 
+            case 'none':
+                // No visual representation for this node
+                return;
+
             default:
+                console.warn(`Unknown model type: ${type}, using cube fallback`);
                 geometry = new THREE.BoxGeometry(10, 10, 10);
         }
 
