@@ -10,15 +10,18 @@ import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 
 from .kinematic import KinematicTree
+from .k3d_loader import K3DLoader
+
 
 
 # Configuration
 TRANSPORT_TYPE = os.environ.get("TRANSPORT_TYPE", "mqtt")  # "mqtt" or "crow"
+K3D_FILE = os.environ.get("K3D_FILE", "")  # Path to k3d file or directory to auto-load
 
 # MQTT configuration
 MQTT_BROKER = os.environ.get("MQTT_BROKER", "localhost")
@@ -35,6 +38,7 @@ tree = KinematicTree()
 tree_data_json: dict = {}  # Store raw tree data for /api/tree endpoint
 clients: list[WebSocket] = []
 mqtt_task = None
+k3d_loader: K3DLoader | None = None  # Current loaded k3d file
 
 
 async def broadcast_scene():
@@ -157,14 +161,34 @@ async def handle_joints_update(payload: dict):
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup and shutdown events"""
-    global mqtt_task, tree_data_json
+    global mqtt_task, tree_data_json, k3d_loader
+
+    # Try to load k3d file if specified
+    if K3D_FILE:
+        k3d_path = Path(K3D_FILE).expanduser().resolve()
+        if k3d_path.exists():
+            try:
+                k3d_loader = K3DLoader()
+                if k3d_path.is_dir():
+                    tree_data_json = k3d_loader.load_directory(k3d_path)
+                else:
+                    tree_data_json = k3d_loader.load_file(k3d_path)
+                tree.load(tree_data_json)
+                print(f"Loaded K3D: {K3D_FILE}")
+                print(f"Joints: {tree.get_joint_names()}")
+                print(f"Models dir: {k3d_loader.models_dir}")
+            except Exception as e:
+                print(f"Failed to load K3D file {K3D_FILE}: {e}")
+        else:
+            print(f"K3D file not found: {K3D_FILE}")
 
     # Load fallback tree from file (will be replaced by transport tree if available)
-    tree_file = STATIC_DIR / "example_tree.json"
-    if tree_file.exists():
-        tree_data_json = json.loads(tree_file.read_text())
-        tree.load(tree_data_json)
-        print(f"Loaded fallback tree with joints: {tree.get_joint_names()}")
+    if not tree_data_json:
+        tree_file = STATIC_DIR / "example_tree.json"
+        if tree_file.exists():
+            tree_data_json = json.loads(tree_file.read_text())
+            tree.load(tree_data_json)
+            print(f"Loaded fallback tree with joints: {tree.get_joint_names()}")
 
     # Start transport listener based on configuration
     if TRANSPORT_TYPE == "crow":
@@ -193,6 +217,10 @@ async def lifespan(app: FastAPI):
             await mqtt_task
         except asyncio.CancelledError:
             pass
+
+    # Cleanup k3d loader temp files
+    if k3d_loader:
+        k3d_loader.cleanup()
 
 
 app = FastAPI(title="WebKin", description="Kinematic Tree Visualizer", lifespan=lifespan)
@@ -271,6 +299,66 @@ async def load_tree(tree_json: dict):
 
     await broadcast_scene_init()
     return {"status": "ok", "joints": tree.get_joint_names()}
+
+
+@app.get("/api/load_k3d")
+async def load_k3d_from_path(path: str):
+    """Load kinematic tree from .k3d file by path on server filesystem.
+
+    Path can be:
+    - Absolute: /home/user/models/robot.k3d
+    - Relative to cwd: ./models/robot.k3d
+    - With ~ expansion: ~/models/robot.k3d
+    """
+    global tree_data_json, k3d_loader
+
+    file_path = Path(path).expanduser().resolve()
+
+    # Clean up previous loader
+    if k3d_loader:
+        k3d_loader.cleanup()
+
+    k3d_loader = K3DLoader()
+
+    try:
+        if file_path.is_dir():
+            # Load from directory (already extracted)
+            tree_data_json = k3d_loader.load_directory(file_path)
+        elif file_path.suffix == '.k3d':
+            # Load from .k3d archive
+            tree_data_json = k3d_loader.load_file(file_path)
+        else:
+            raise HTTPException(status_code=400, detail="Path must be a .k3d file or directory with k3d.json")
+
+        tree.load(tree_data_json)
+
+        print(f"Loaded K3D from path: {path}")
+        print(f"Joints: {tree.get_joint_names()}")
+        print(f"Models dir: {k3d_loader.models_dir}")
+
+        await broadcast_scene_init()
+        return {
+            "status": "ok",
+            "joints": tree.get_joint_names(),
+            "camera": k3d_loader.camera_pose
+        }
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.get("/k3d/models/{filename}")
+async def get_k3d_model(filename: str):
+    """Serve STL models from loaded k3d file"""
+    if k3d_loader is None or k3d_loader.models_dir is None:
+        raise HTTPException(status_code=404, detail="No K3D file loaded")
+
+    model_path = k3d_loader.get_model_path(filename)
+    if model_path is None:
+        raise HTTPException(status_code=404, detail=f"Model not found: {filename}")
+
+    return FileResponse(model_path, media_type="application/octet-stream")
 
 
 # Mount static files
