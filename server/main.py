@@ -22,6 +22,7 @@ from .k3d_loader import K3DLoader
 # Configuration
 TRANSPORT_TYPE = os.environ.get("TRANSPORT_TYPE", "mqtt")  # "mqtt" or "crow"
 K3D_FILE = os.environ.get("K3D_FILE", "")  # Path to k3d file or directory to auto-load
+Z_UP = os.environ.get("Z_UP", "0").lower() in ("1", "true", "yes")  # Convert Z-up to Y-up
 
 # MQTT configuration
 MQTT_BROKER = os.environ.get("MQTT_BROKER", "localhost")
@@ -69,7 +70,8 @@ async def broadcast_scene_init():
     message = json.dumps({
         "type": "scene_init",
         "nodes": scene_data,
-        "joints": tree.get_joint_names()
+        "joints": tree.get_joint_names(),
+        "zUp": Z_UP
     })
 
     disconnected = []
@@ -246,7 +248,8 @@ async def websocket_endpoint(websocket: WebSocket):
     await websocket.send_text(json.dumps({
         "type": "scene_init",
         "nodes": scene_data,
-        "joints": tree.get_joint_names()
+        "joints": tree.get_joint_names(),
+        "zUp": Z_UP
     }))
 
     try:

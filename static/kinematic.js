@@ -142,6 +142,23 @@ class KinematicScene {
         this.scene = scene;
         this.nodes = {};
         this.treeData = null;  // Original tree structure for local calculations
+        this.zUp = false;
+
+        // Root group for Z-up to Y-up conversion
+        this.rootGroup = new THREE.Group();
+        this.rootGroup.name = '__kinematic_root__';
+        this.scene.add(this.rootGroup);
+    }
+
+    setZUp(enabled) {
+        this.zUp = enabled;
+        if (enabled) {
+            // Rotate -90 degrees around X axis to convert Z-up to Y-up
+            this.rootGroup.rotation.x = -Math.PI / 2;
+        } else {
+            this.rootGroup.rotation.x = 0;
+        }
+        console.log(`Z-up mode: ${enabled}`);
     }
 
     initFromSceneData(sceneData) {
@@ -153,7 +170,7 @@ class KinematicScene {
             if (!this.nodes[name]) {
                 const node = new SceneNode(name, data.model);
                 this.nodes[name] = node;
-                this.scene.add(node.group);
+                this.rootGroup.add(node.group);  // Add to rootGroup for Z-up support
                 console.log(`  Created: ${name}`);
             } else {
                 console.log(`  Already exists: ${name}`);
@@ -279,9 +296,9 @@ class KinematicScene {
     clear() {
         console.log(`Clearing scene, removing ${Object.keys(this.nodes).length} tracked nodes`);
 
-        // Remove all tracked nodes
+        // Remove all tracked nodes from rootGroup
         for (const [name, node] of Object.entries(this.nodes)) {
-            this.scene.remove(node.group);
+            this.rootGroup.remove(node.group);
 
             // Dispose geometries and materials to free memory
             if (node.mesh) {
@@ -291,23 +308,22 @@ class KinematicScene {
             console.log(`  Removed tracked: ${name}`);
         }
 
-        // Also remove any stray Group objects (in case of race conditions)
+        // Also remove any stray Group objects from rootGroup (in case of race conditions)
         const toRemove = [];
-        for (const child of this.scene.children) {
-            // Keep lights, helpers, etc. - only remove Groups with names
+        for (const child of this.rootGroup.children) {
             if (child.isGroup && child.name) {
                 toRemove.push(child);
             }
         }
         for (const obj of toRemove) {
             console.log(`  Removed stray: ${obj.name}`);
-            this.scene.remove(obj);
+            this.rootGroup.remove(obj);
         }
 
         this.nodes = {};
         this.treeData = null;
         this.jointCoords = {};
 
-        console.log(`Scene children remaining: ${this.scene.children.length}`);
+        console.log(`RootGroup children remaining: ${this.rootGroup.children.length}`);
     }
 }

@@ -149,9 +149,13 @@ function handleMessage(message) {
             console.log('=== SCENE_INIT received ===');
             console.log('Joints:', message.joints);
             console.log('Nodes:', Object.keys(message.nodes));
+            console.log('Z-up:', message.zUp);
 
             // Clear existing scene (for dynamic tree reload)
             kinematicScene.clear();
+
+            // Set Z-up mode if specified by server
+            kinematicScene.setZUp(message.zUp || false);
 
             // Initial scene setup
             kinematicScene.initFromSceneData(message.nodes);
