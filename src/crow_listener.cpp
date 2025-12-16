@@ -58,33 +58,39 @@ bool crow_listener::connect()
     crow::hostaddr addr(_config.crowker_addr);
 
     // Create tree subscriber
-    _tree_subscriber = std::make_unique<crow::subscriber>();
-    _tree_subscriber->init(
-        igris::make_delegate(&crow_listener::handle_tree_message, this));
-    _tree_subscriber->subscribe(
-        _tower,
+    _tree_subscriber = std::make_unique<crow::subscriber_node>(
         addr.view(),
-        _config.tree_topic.c_str(),
+        _config.tree_topic,
+        [this](nos::buffer data)
+        { handle_tree_message(data); });
+    _tree_subscriber->bind(_tower);
+    _tree_subscriber->init_subscribe(
+        addr.view(),
+        _config.tree_topic,
         1,   // qos
         100, // ackquant
         0,   // rqos
         50   // rackquant
     );
+    _tree_subscriber->subscribe();
     nos::println("Crow: subscribed to ", _config.tree_topic);
 
     // Create joints subscriber
-    _joints_subscriber = std::make_unique<crow::subscriber>();
-    _joints_subscriber->init(
-        igris::make_delegate(&crow_listener::handle_joints_message, this));
-    _joints_subscriber->subscribe(
-        _tower,
+    _joints_subscriber = std::make_unique<crow::subscriber_node>(
         addr.view(),
-        _config.joints_topic.c_str(),
+        _config.joints_topic,
+        [this](nos::buffer data)
+        { handle_joints_message(data); });
+    _joints_subscriber->bind(_tower);
+    _joints_subscriber->init_subscribe(
+        addr.view(),
+        _config.joints_topic,
         0,  // qos - unreliable for frequent updates
         50, // ackquant
         0,  // rqos
         50  // rackquant
     );
+    _joints_subscriber->subscribe();
     nos::println("Crow: subscribed to ", _config.joints_topic);
 
     _connected = true;
@@ -118,9 +124,8 @@ void crow_listener::disconnect()
 
 #ifdef HAVE_CROW
 
-void crow_listener::handle_tree_message(crow::pubsub_packet_ptr pack)
+void crow_listener::handle_tree_message(nos::buffer data)
 {
-    nos::buffer data = pack.message();
     std::string payload(data.data(), data.size());
 
     try
@@ -138,9 +143,8 @@ void crow_listener::handle_tree_message(crow::pubsub_packet_ptr pack)
     }
 }
 
-void crow_listener::handle_joints_message(crow::pubsub_packet_ptr pack)
+void crow_listener::handle_joints_message(nos::buffer data)
 {
-    nos::buffer data = pack.message();
     std::string payload(data.data(), data.size());
 
     try

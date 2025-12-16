@@ -17,7 +17,7 @@
 #include <crow/tower_cls.h>
 #include <crow/tower_thread_executor.h>
 #include <crow/gates/udpgate.h>
-#include <crow/pubsub/subscriber.h>
+#include <crow/nodes/subscriber_node.h>
 #include <crow/hostaddr.h>
 #endif
 
@@ -62,11 +62,11 @@ private:
     crow::Tower _tower;
     std::unique_ptr<crow::TowerThreadExecutor> _executor;
     std::shared_ptr<crow::udpgate> _udpgate;
-    std::unique_ptr<crow::subscriber> _tree_subscriber;
-    std::unique_ptr<crow::subscriber> _joints_subscriber;
+    std::unique_ptr<crow::subscriber_node> _tree_subscriber;
+    std::unique_ptr<crow::subscriber_node> _joints_subscriber;
 
-    void handle_tree_message(crow::pubsub_packet_ptr pack);
-    void handle_joints_message(crow::pubsub_packet_ptr pack);
+    void handle_tree_message(nos::buffer data);
+    void handle_joints_message(nos::buffer data);
 #endif
 };
 
