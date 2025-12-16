@@ -73,6 +73,7 @@ bool crow_listener::connect()
         50   // rackquant
     );
     _tree_subscriber->subscribe();
+    _tree_subscriber->install_keepalive(2000); // Re-subscribe every 2 seconds
     nos::println("Crow: subscribed to ", _config.tree_topic);
 
     // Create joints subscriber
