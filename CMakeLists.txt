@@ -30,6 +30,7 @@ set(SOURCES
     src/main.cpp
     src/mqtt_listener.cpp
     src/crow_listener.cpp
+    src/k3d_loader.cpp
 )
 
 # Include directories

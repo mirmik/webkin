@@ -8,6 +8,7 @@
 #include "kinematic.hpp"
 #include "mqtt_listener.hpp"
 #include "crow_listener.hpp"
+#include "k3d_loader.hpp"
 
 #include <crowhttp.h>
 
@@ -22,6 +23,8 @@
 #include <filesystem>
 #include <csignal>
 #include <atomic>
+#include <memory>
+#include <cstdlib>
 
 namespace fs = std::filesystem;
 
@@ -36,6 +39,9 @@ std::atomic<bool> g_running{true};
 // Paths
 fs::path g_base_dir;
 fs::path g_static_dir;
+
+// K3D loader
+std::unique_ptr<webkin::K3DLoader> g_k3d_loader;
 
 // Transport type
 enum class TransportType
@@ -177,6 +183,20 @@ int main(int argc, char *argv[])
     int mqtt_port = 1883;
     std::string mqtt_topic = "robot/joints";
     std::string crowker_addr = ".12.127.0.0.1:10009";
+    std::string k3d_file;
+
+    // Check K3D_FILE environment variable
+    if (const char *env_k3d = std::getenv("K3D_FILE"))
+    {
+        k3d_file = env_k3d;
+    }
+
+    // Check Z_UP environment variable
+    if (const char *env_zup = std::getenv("Z_UP"))
+    {
+        std::string val = env_zup;
+        g_z_up = (val == "1" || val == "true" || val == "yes");
+    }
 
     for (int i = 1; i < argc; ++i)
     {
@@ -217,6 +237,10 @@ int main(int argc, char *argv[])
         {
             crowker_addr = argv[++i];
         }
+        else if (arg == "--k3d" && i + 1 < argc)
+        {
+            k3d_file = argv[++i];
+        }
         else if (arg == "--help" || arg == "-h")
         {
             nos::println("Usage: webkin [options]");
@@ -224,6 +248,7 @@ int main(int argc, char *argv[])
             nos::println("  --host HOST        Host to bind (default: 0.0.0.0)");
             nos::println("  --port PORT        Port to bind (default: 8000)");
             nos::println("  --z-up             Convert Z-up to Y-up");
+            nos::println("  --k3d PATH         Load K3D file or directory (env: K3D_FILE)");
             nos::println("");
             nos::println("Transport options:");
             nos::println("  --mqtt             Use MQTT transport");
@@ -255,17 +280,70 @@ int main(int argc, char *argv[])
 
     nos::println("Static dir: ", g_static_dir.string());
 
-    // Load example tree if exists
-    fs::path tree_file = g_static_dir / "example_tree.json";
-    if (fs::exists(tree_file))
+    // Try to load K3D file if specified
+    if (!k3d_file.empty())
     {
-        std::string content = read_file(tree_file);
-        g_tree_data_json = nos::json::parse(content);
-        g_tree.load(g_tree_data_json);
-        nos::println("Loaded fallback tree with joints: ");
-        for (const auto &name : g_tree.get_joint_names())
+        fs::path k3d_path = fs::path(k3d_file);
+        // Expand ~ to home directory
+        if (!k3d_path.empty() && k3d_path.string()[0] == '~')
         {
-            nos::println("  - ", name);
+            const char *home = std::getenv("HOME");
+            if (home)
+            {
+                k3d_path = fs::path(home) / k3d_path.string().substr(2);
+            }
+        }
+
+        if (fs::exists(k3d_path))
+        {
+            try
+            {
+                g_k3d_loader = std::make_unique<webkin::K3DLoader>();
+                if (fs::is_directory(k3d_path))
+                {
+                    g_tree_data_json = g_k3d_loader->load_directory(k3d_path);
+                }
+                else
+                {
+                    g_tree_data_json = g_k3d_loader->load_file(k3d_path);
+                }
+                g_tree.load(g_tree_data_json);
+                nos::println("Loaded K3D: ", k3d_file);
+                nos::println("Joints: ");
+                for (const auto &name : g_tree.get_joint_names())
+                {
+                    nos::println("  - ", name);
+                }
+                if (g_k3d_loader->has_models())
+                {
+                    nos::println("Models dir: ", g_k3d_loader->models_dir().string());
+                }
+            }
+            catch (const std::exception &e)
+            {
+                nos::println("Failed to load K3D file ", k3d_file, ": ", e.what());
+            }
+        }
+        else
+        {
+            nos::println("K3D file not found: ", k3d_file);
+        }
+    }
+
+    // Load fallback tree if no K3D loaded
+    if (g_tree_data_json.is_nil())
+    {
+        fs::path tree_file = g_static_dir / "example_tree.json";
+        if (fs::exists(tree_file))
+        {
+            std::string content = read_file(tree_file);
+            g_tree_data_json = nos::json::parse(content);
+            g_tree.load(g_tree_data_json);
+            nos::println("Loaded fallback tree with joints: ");
+            for (const auto &name : g_tree.get_joint_names())
+            {
+                nos::println("  - ", name);
+            }
         }
     }
 
@@ -355,6 +433,31 @@ int main(int argc, char *argv[])
 
         crowhttp::response res(200, content);
         res.set_header("Content-Type", get_mime_type(file_path));
+        return res; });
+
+    // K3D model files
+    CROW_ROUTE(app, "/k3d/models/<path>")
+    ([](const std::string &filename)
+     {
+        if (!g_k3d_loader || !g_k3d_loader->has_models())
+        {
+            return crowhttp::response(404, "No K3D file loaded");
+        }
+
+        fs::path model_path = g_k3d_loader->get_model_path(filename);
+        if (model_path.empty())
+        {
+            return crowhttp::response(404, "Model not found: " + filename);
+        }
+
+        std::string content = read_file(model_path);
+        if (content.empty())
+        {
+            return crowhttp::response(404, "Failed to read model");
+        }
+
+        crowhttp::response res(200, content);
+        res.set_header("Content-Type", "application/octet-stream");
         return res; });
 
     // REST API: Get tree
