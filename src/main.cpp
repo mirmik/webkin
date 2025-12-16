@@ -34,6 +34,7 @@ nos::trent g_tree_data_json;
 std::mutex g_mutex;
 std::set<crowhttp::websocket::connection *> g_clients;
 bool g_z_up = false;
+bool g_debug = false;
 std::atomic<bool> g_running{true};
 
 // Paths
@@ -87,8 +88,18 @@ void broadcast_to_clients(const std::string &message)
 void broadcast_scene_update()
 {
     if (g_clients.empty())
+    {
+        if (g_debug)
+        {
+            nos::println("[DEBUG] broadcast_scene_update: no clients");
+        }
         return;
+    }
     std::string msg = trent_to_json(make_scene_update_message());
+    if (g_debug)
+    {
+        nos::println("[DEBUG] broadcast_scene_update: sending to ", g_clients.size(), " clients, msg_len=", msg.size());
+    }
     broadcast_to_clients(msg);
 }
 
@@ -117,6 +128,11 @@ void on_tree_received(const nos::trent &data)
 
 void on_joints_received(const nos::trent &data)
 {
+    if (g_debug)
+    {
+        nos::println("[DEBUG] on_joints_received called");
+    }
+
     std::lock_guard<std::mutex> lock(g_mutex);
     const auto &joints_data = data["joints"];
     if (joints_data.is_dict())
@@ -128,7 +144,16 @@ void on_joints_received(const nos::trent &data)
         }
         g_tree.set_joint_coords(joints);
         g_tree.update();
+
+        if (g_debug)
+        {
+            nos::println("[DEBUG] joints updated, clients=", g_clients.size());
+        }
         broadcast_scene_update();
+    }
+    else if (g_debug)
+    {
+        nos::println("[DEBUG] on_joints_received: data[joints] is not dict");
     }
 }
 
@@ -237,6 +262,10 @@ int main(int argc, char *argv[])
         {
             crowker_addr = argv[++i];
         }
+        else if (arg == "--debug" || arg == "-d")
+        {
+            g_debug = true;
+        }
         else if (arg == "--k3d" && i + 1 < argc)
         {
             k3d_file = argv[++i];
@@ -249,6 +278,7 @@ int main(int argc, char *argv[])
             nos::println("  --port PORT        Port to bind (default: 8000)");
             nos::println("  --z-up             Convert Z-up to Y-up");
             nos::println("  --k3d PATH         Load K3D file or directory (env: K3D_FILE)");
+            nos::println("  --debug, -d        Enable debug output");
             nos::println("");
             nos::println("Transport options:");
             nos::println("  --mqtt             Use MQTT transport");

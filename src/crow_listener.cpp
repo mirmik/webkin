@@ -6,6 +6,9 @@
 #include <nos/print.h>
 #include <nos/trent/json.h>
 
+// Debug flag from main
+extern bool g_debug;
+
 namespace webkin
 {
 
@@ -92,6 +95,7 @@ bool crow_listener::connect()
         50  // rackquant
     );
     _joints_subscriber->subscribe();
+    _joints_subscriber->install_keepalive(2000); // Re-subscribe every 2 seconds
     nos::println("Crow: subscribed to ", _config.joints_topic);
 
     _connected = true;
@@ -127,6 +131,11 @@ void crow_listener::disconnect()
 
 void crow_listener::handle_tree_message(nos::buffer data)
 {
+    if (g_debug)
+    {
+        nos::println("[DEBUG] crow_listener::handle_tree_message, size=", data.size());
+    }
+
     std::string payload(data.data(), data.size());
 
     try
@@ -135,7 +144,15 @@ void crow_listener::handle_tree_message(nos::buffer data)
         nos::println("Crow: received kinematic tree");
         if (_on_tree)
         {
+            if (g_debug)
+            {
+                nos::println("[DEBUG] calling _on_tree callback");
+            }
             _on_tree(tree_data);
+        }
+        else if (g_debug)
+        {
+            nos::println("[DEBUG] _on_tree callback not set!");
         }
     }
     catch (const std::exception &e)
@@ -146,6 +163,11 @@ void crow_listener::handle_tree_message(nos::buffer data)
 
 void crow_listener::handle_joints_message(nos::buffer data)
 {
+    if (g_debug)
+    {
+        nos::println("[DEBUG] crow_listener::handle_joints_message, size=", data.size());
+    }
+
     std::string payload(data.data(), data.size());
 
     try
@@ -153,7 +175,15 @@ void crow_listener::handle_joints_message(nos::buffer data)
         nos::trent joints_data = nos::json::parse(payload);
         if (_on_joints)
         {
+            if (g_debug)
+            {
+                nos::println("[DEBUG] calling _on_joints callback");
+            }
             _on_joints(joints_data);
+        }
+        else if (g_debug)
+        {
+            nos::println("[DEBUG] _on_joints callback not set!");
         }
     }
     catch (const std::exception &e)
