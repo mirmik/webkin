@@ -1,1 +1,0 @@
-/usr/bin/c++ CMakeFiles/webkin.dir/src/main.cpp.o CMakeFiles/webkin.dir/src/mqtt_listener.cpp.o CMakeFiles/webkin.dir/src/crow_listener.cpp.o -o webkin  -lnos -ligris /usr/lib/x86_64-linux-gnu/libmosquitto.so /usr/lib/libcrow.so 
