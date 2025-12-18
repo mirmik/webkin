@@ -102,6 +102,10 @@ class KinematicNode:
         axis_data = data.get("axis", [0, 0, 1])
         self.axis = Vec3.from_list(axis_data)
 
+        # Axis offset and scale: effective_coord = (coord + axis_offset) * axis_scale
+        self.axis_offset = data.get("axis_offset", 0.0)
+        self.axis_scale = data.get("axis_scale", 1.0)
+
         # Current joint coordinate
         self.coord = 0.0
 
@@ -122,11 +126,13 @@ class KinematicNode:
 
     def get_joint_transform(self) -> Pose:
         """Get transform introduced by joint movement"""
+        # Apply offset and scale: effective_coord = (coord + offset) * axis_scale
+        effective_coord = (self.coord + self.axis_offset) * self.axis_scale
         if self.type == "rotator":
-            q = Quat.from_axis_angle(self.axis, self.coord)
+            q = Quat.from_axis_angle(self.axis, effective_coord)
             return Pose(orientation=q)
         elif self.type == "actuator":
-            offset = self.axis * self.coord
+            offset = self.axis * effective_coord
             return Pose(position=offset)
         return Pose()
 

@@ -6,6 +6,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # Find required packages
 find_package(Threads REQUIRED)
+find_package(ZLIB REQUIRED)
 
 # Optional: MQTT support via mosquitto
 find_library(MOSQUITTO_LIB mosquitto)
@@ -49,6 +50,7 @@ target_include_directories(${PROJECT_NAME} PRIVATE ${INCLUDE_DIRS})
 # Link with system libraries
 target_link_libraries(${PROJECT_NAME} PRIVATE
     Threads::Threads
+    ZLIB::ZLIB
     nos
     igris
 )

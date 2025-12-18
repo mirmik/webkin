@@ -147,6 +147,8 @@ public:
 
     Pose local_pose;
     Vec3 axis{0, 0, 1};
+    double axis_offset = 0.0;  // Offset added to coord before scaling
+    double axis_scale = 1.0;   // Scale multiplier: effective_coord = (coord + offset) * scale
     double coord = 0.0;
 
     nos::trent model; // Pass through to client
@@ -176,6 +178,19 @@ public:
             axis = Vec3::from_trent(axis_data);
         }
 
+        // Axis offset and scale
+        const auto &offset_data = data["axis_offset"];
+        if (!offset_data.is_nil())
+        {
+            axis_offset = offset_data.as_numer_default(0.0);
+        }
+
+        const auto &scale_data = data["axis_scale"];
+        if (!scale_data.is_nil())
+        {
+            axis_scale = scale_data.as_numer_default(1.0);
+        }
+
         // Model data (pass through to client)
         model = data["model"];
 
@@ -199,14 +214,16 @@ public:
 
     Pose get_joint_transform() const
     {
+        // Apply offset and scale: effective_coord = (coord + offset) * axis_scale
+        double effective_coord = (coord + axis_offset) * axis_scale;
         if (type == "rotator")
         {
-            Quat q = Quat::from_axis_angle(axis, coord);
+            Quat q = Quat::from_axis_angle(axis, effective_coord);
             return Pose(Vec3(), q);
         }
         else if (type == "actuator")
         {
-            Vec3 offset = axis * coord;
+            Vec3 offset = axis * effective_coord;
             return Pose(offset, Quat());
         }
         return Pose();

@@ -9,6 +9,7 @@
 #include <sstream>
 #include <cstdlib>
 #include <cstring>
+#include <zlib.h>
 
 // Simple ZIP reading (central directory at end of file)
 // For production, consider using libzip or miniz
@@ -40,6 +41,27 @@ namespace
         uint16_t extra_len;
     } __attribute__((packed));
 
+    // Decompress raw deflate data using zlib
+    bool inflate_data(const std::vector<char> &compressed, std::vector<char> &decompressed, size_t uncompressed_size)
+    {
+        decompressed.resize(uncompressed_size);
+        
+        z_stream stream{};
+        stream.next_in = reinterpret_cast<Bytef*>(const_cast<char*>(compressed.data()));
+        stream.avail_in = compressed.size();
+        stream.next_out = reinterpret_cast<Bytef*>(decompressed.data());
+        stream.avail_out = uncompressed_size;
+        
+        // Use -MAX_WBITS for raw deflate (no zlib/gzip header)
+        if (inflateInit2(&stream, -MAX_WBITS) != Z_OK)
+            return false;
+        
+        int ret = inflate(&stream, Z_FINISH);
+        inflateEnd(&stream);
+        
+        return (ret == Z_STREAM_END);
+    }
+
     bool extract_zip_file(const fs::path &zip_path, const fs::path &dest_dir,
                           std::string &k3d_json_content)
     {
@@ -62,15 +84,30 @@ namespace
             // Skip extra field
             file.seekg(header.extra_len, std::ios::cur);
 
-            // Read file data (assuming no compression for now, compression=0)
-            std::vector<char> data(header.uncompressed_size);
+            // Read file data
+            std::vector<char> data;
             if (header.compression == 0)
             {
+                // Stored (no compression)
+                data.resize(header.uncompressed_size);
                 file.read(data.data(), header.uncompressed_size);
+            }
+            else if (header.compression == 8)
+            {
+                // DEFLATE compression
+                std::vector<char> compressed(header.compressed_size);
+                file.read(compressed.data(), header.compressed_size);
+                
+                if (!inflate_data(compressed, data, header.uncompressed_size))
+                {
+                    nos::println("  Failed to decompress: ", filename);
+                    continue;
+                }
             }
             else
             {
-                // Skip compressed files we can't handle
+                // Skip unsupported compression methods
+                nos::println("  Unsupported compression method ", header.compression, " for: ", filename);
                 file.seekg(header.compressed_size, std::ios::cur);
                 continue;
             }
