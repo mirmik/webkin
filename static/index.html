@@ -270,6 +270,99 @@
         WebSocket: <span id="ws-status" class="status-disconnected">disconnected</span>
     </div>
 
+    <!-- New Year Tree 🎄 -->
+    <div id="xmas-tree">
+        <div class="star">★</div>
+        <div class="tree-layer layer1">▲</div>
+        <div class="tree-layer layer2">▲</div>
+        <div class="tree-layer layer3">▲</div>
+        <div class="trunk">█</div>
+        <div class="ornaments">
+            <span class="ornament o1">●</span>
+            <span class="ornament o2">●</span>
+            <span class="ornament o3">●</span>
+            <span class="ornament o4">●</span>
+            <span class="ornament o5">●</span>
+        </div>
+        <div class="snow">❄ ❄ ❄</div>
+        <div class="greeting">С Новым 2026 Годом! 🎉</div>
+    </div>
+
+    <style>
+        #xmas-tree {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            text-align: center;
+            font-size: 24px;
+            z-index: 1000;
+            pointer-events: none;
+            animation: tree-glow 2s ease-in-out infinite;
+        }
+        @keyframes tree-glow {
+            0%, 100% { filter: drop-shadow(0 0 5px #0f0); }
+            50% { filter: drop-shadow(0 0 15px #0f0); }
+        }
+        .star {
+            color: gold;
+            font-size: 28px;
+            text-shadow: 0 0 10px gold, 0 0 20px orange;
+            animation: twinkle 1s ease-in-out infinite;
+        }
+        @keyframes twinkle {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.7; transform: scale(1.2); }
+        }
+        .tree-layer {
+            color: #228B22;
+            line-height: 0.7;
+        }
+        .layer1 { font-size: 30px; }
+        .layer2 { font-size: 45px; }
+        .layer3 { font-size: 60px; }
+        .trunk {
+            color: #8B4513;
+            font-size: 20px;
+        }
+        .ornaments {
+            position: absolute;
+            top: 30px;
+            left: 0;
+            right: 0;
+        }
+        .ornament {
+            position: absolute;
+            font-size: 10px;
+            animation: blink 1.5s ease-in-out infinite;
+        }
+        .o1 { color: red; left: 25px; top: 15px; animation-delay: 0s; }
+        .o2 { color: blue; left: 45px; top: 25px; animation-delay: 0.3s; }
+        .o3 { color: yellow; left: 15px; top: 40px; animation-delay: 0.6s; }
+        .o4 { color: magenta; left: 55px; top: 45px; animation-delay: 0.9s; }
+        .o5 { color: cyan; left: 35px; top: 55px; animation-delay: 1.2s; }
+        @keyframes blink {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.3; }
+        }
+        .snow {
+            color: white;
+            font-size: 12px;
+            margin-top: 5px;
+            animation: snow-fall 3s ease-in-out infinite;
+        }
+        @keyframes snow-fall {
+            0%, 100% { opacity: 0.5; transform: translateY(0); }
+            50% { opacity: 1; transform: translateY(-3px); }
+        }
+        .greeting {
+            color: #ff6b6b;
+            font-size: 12px;
+            margin-top: 8px;
+            font-weight: bold;
+            text-shadow: 0 0 5px #ff6b6b;
+        }
+    </style>
+
     <!-- Three.js from CDN -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>

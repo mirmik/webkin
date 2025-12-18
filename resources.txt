@@ -1,0 +1,3 @@
+# WebKin embedded resources
+# Static web files
+/static/ ./static/

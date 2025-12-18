@@ -32,6 +32,17 @@ set(SOURCES
     src/mqtt_listener.cpp
     src/crow_listener.cpp
     src/k3d_loader.cpp
+    ircc_resources.gen.cpp
+)
+
+# Generate embedded resources using ircc
+execute_process(COMMAND ircc resources.txt -o ircc_resources.gen.cpp --sources-cmake
+                WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+                OUTPUT_VARIABLE RESOURCE_LIST)
+add_custom_command(OUTPUT ircc_resources.gen.cpp
+    COMMAND ircc resources.txt -o ircc_resources.gen.cpp
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    DEPENDS ${RESOURCE_LIST}
 )
 
 # Include directories

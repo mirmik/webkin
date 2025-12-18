@@ -25,8 +25,13 @@
 #include <atomic>
 #include <memory>
 #include <cstdlib>
+#include <vector>
 
 namespace fs = std::filesystem;
+
+// IRCC embedded resources
+extern std::string ircc_string(const std::string &key);
+extern std::vector<std::string> ircc_keys();
 
 // Global state
 webkin::KinematicTree g_tree;
@@ -36,6 +41,7 @@ std::set<crowhttp::websocket::connection *> g_clients;
 bool g_z_up = false;
 bool g_debug = false;
 std::atomic<bool> g_running{true};
+bool g_use_embedded_resources = true;  // Use embedded resources by default
 
 // Paths
 fs::path g_base_dir;
@@ -59,6 +65,23 @@ enum class TransportType
 
 // Forward declarations
 std::string read_file(const fs::path &path);
+
+// Read static resource (from embedded or file system)
+std::string read_static_resource(const std::string &resource_path)
+{
+    if (g_use_embedded_resources)
+    {
+        // Try embedded resource first
+        std::string key = "/static/" + resource_path;
+        std::string content = ircc_string(key.c_str());
+        if (!content.empty())
+        {
+            return content;
+        }
+    }
+    // Fall back to file system
+    return read_file(g_static_dir / resource_path);
+}
 
 std::string trent_to_json(const nos::trent &t)
 {
@@ -299,9 +322,13 @@ std::string read_file(const fs::path &path)
     return buffer.str();
 }
 
-std::string get_mime_type(const fs::path &path)
+std::string get_mime_type(const std::string &filename)
 {
-    std::string ext = path.extension().string();
+    size_t dot_pos = filename.rfind('.');
+    if (dot_pos == std::string::npos)
+        return "application/octet-stream";
+    
+    std::string ext = filename.substr(dot_pos);
     if (ext == ".html")
         return "text/html";
     if (ext == ".js")
@@ -319,6 +346,11 @@ std::string get_mime_type(const fs::path &path)
     if (ext == ".stl")
         return "application/octet-stream";
     return "application/octet-stream";
+}
+
+std::string get_mime_type(const fs::path &path)
+{
+    return get_mime_type(path.string());
 }
 
 void signal_handler(int sig)
@@ -402,6 +434,11 @@ int main(int argc, char *argv[])
         {
             k3d_file = argv[++i];
         }
+        else if (arg == "--static-dir" && i + 1 < argc)
+        {
+            g_static_dir = argv[++i];
+            g_use_embedded_resources = false;
+        }
         else if (arg == "--help" || arg == "-h")
         {
             nos::println("Usage: webkin [options]");
@@ -410,6 +447,7 @@ int main(int argc, char *argv[])
             nos::println("  --port PORT        Port to bind (default: 8000)");
             nos::println("  --z-up             Convert Z-up to Y-up");
             nos::println("  --k3d PATH         Load K3D file or directory (env: K3D_FILE)");
+            nos::println("  --static-dir DIR   Use external static files directory");
             nos::println("  --debug, -d        Enable debug output");
             nos::println("");
             nos::println("Transport options:");
@@ -431,14 +469,17 @@ int main(int argc, char *argv[])
     std::signal(SIGINT, signal_handler);
     std::signal(SIGTERM, signal_handler);
 
-    // Setup paths
-    g_base_dir = fs::path(argv[0]).parent_path().parent_path();
-    if (!fs::exists(g_base_dir / "static"))
+    // Setup paths (only if not using embedded resources or --static-dir was not specified)
+    if (g_static_dir.empty())
     {
-        // Try current directory
-        g_base_dir = fs::current_path();
+        g_base_dir = fs::path(argv[0]).parent_path().parent_path();
+        if (!fs::exists(g_base_dir / "static"))
+        {
+            // Try current directory
+            g_base_dir = fs::current_path();
+        }
+        g_static_dir = g_base_dir / "static";
     }
-    g_static_dir = g_base_dir / "static";
 
     // Setup config directory (XDG Base Directory Specification)
     const char *xdg_config = std::getenv("XDG_CONFIG_HOME");
@@ -463,7 +504,14 @@ int main(int argc, char *argv[])
     // Load axis overrides
     load_axis_overrides();
 
-    nos::println("Static dir: ", g_static_dir.string());
+    if (g_use_embedded_resources)
+    {
+        nos::println("Using embedded resources");
+    }
+    else
+    {
+        nos::println("Static dir: ", g_static_dir.string());
+    }
     nos::println("Config dir: ", g_config_dir.string());
 
     // Try to load K3D file if specified
@@ -594,7 +642,7 @@ int main(int argc, char *argv[])
     CROW_ROUTE(app, "/")
     ([]()
      {
-        std::string content = read_file(g_static_dir / "index.html");
+        std::string content = read_static_resource("index.html");
         if (content.empty()) {
             return crowhttp::response(404, "Not found");
         }
@@ -606,21 +654,18 @@ int main(int argc, char *argv[])
     CROW_ROUTE(app, "/static/<path>")
     ([](const std::string &path)
      {
-        fs::path file_path = g_static_dir / path;
-
         // Security: prevent directory traversal
-        fs::path canonical = fs::weakly_canonical(file_path);
-        if (canonical.string().find(fs::weakly_canonical(g_static_dir).string()) != 0) {
+        if (path.find("..") != std::string::npos) {
             return crowhttp::response(403, "Forbidden");
         }
 
-        std::string content = read_file(file_path);
+        std::string content = read_static_resource(path);
         if (content.empty()) {
             return crowhttp::response(404, "Not found");
         }
 
         crowhttp::response res(200, content);
-        res.set_header("Content-Type", get_mime_type(file_path));
+        res.set_header("Content-Type", get_mime_type(path));
         return res; });
 
     // K3D model files
