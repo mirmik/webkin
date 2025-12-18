@@ -113,6 +113,57 @@
             opacity: 0.4;
             pointer-events: none;
         }
+
+        .slider-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .slider-row input[type="range"] {
+            flex: 1;
+        }
+
+        .btn-zero {
+            background: #ff9800;
+            color: #000;
+            border: none;
+            border-radius: 3px;
+            padding: 2px 6px;
+            font-size: 10px;
+            cursor: pointer;
+            white-space: nowrap;
+        }
+
+        .btn-zero:hover {
+            background: #ffb74d;
+        }
+
+        .btn-zero.has-override {
+            background: #4caf50;
+            color: #fff;
+        }
+
+        .btn-clear-overrides {
+            background: #f44336;
+            color: #fff;
+            border: none;
+            border-radius: 4px;
+            padding: 6px 12px;
+            font-size: 12px;
+            cursor: pointer;
+            margin-top: 10px;
+            width: 100%;
+        }
+
+        .btn-clear-overrides:hover {
+            background: #e53935;
+        }
+
+        .btn-clear-overrides:disabled {
+            background: #666;
+            cursor: not-allowed;
+        }
     </style>
 </head>
 <body>
@@ -137,6 +188,7 @@
         <div id="joint-sliders" class="disabled">
             <!-- Sliders will be generated here -->
         </div>
+        <button id="clear-overrides" class="btn-clear-overrides" disabled>Clear All Zero Overrides</button>
     </div>
 
     <div id="status">

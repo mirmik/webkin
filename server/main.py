@@ -15,9 +15,15 @@ from typing import List, Dict, Optional
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
+from pydantic import BaseModel
 
 from .kinematic import KinematicTree
 from .k3d_loader import K3DLoader
+
+
+# Offset overrides storage (XDG Base Directory Specification)
+CONFIG_DIR = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "webkin"
+OFFSET_OVERRIDES_FILE = CONFIG_DIR / "offset_overrides.json"
 
 
 
@@ -42,6 +48,38 @@ tree_data_json: dict = {}  # Store raw tree data for /api/tree endpoint
 clients: List[WebSocket] = []
 mqtt_task = None
 k3d_loader: Optional[K3DLoader] = None  # Current loaded k3d file
+offset_overrides: Dict[str, float] = {}  # axis_name -> offset_override
+
+
+def load_offset_overrides():
+    """Load offset overrides from config file"""
+    global offset_overrides
+    if OFFSET_OVERRIDES_FILE.exists():
+        try:
+            offset_overrides = json.loads(OFFSET_OVERRIDES_FILE.read_text())
+            print(f"Loaded offset overrides: {offset_overrides}")
+        except Exception as e:
+            print(f"Failed to load offset overrides: {e}")
+            offset_overrides = {}
+    else:
+        offset_overrides = {}
+
+
+def save_offset_overrides():
+    """Save offset overrides to config file"""
+    try:
+        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        OFFSET_OVERRIDES_FILE.write_text(json.dumps(offset_overrides, indent=2))
+        print(f"Saved offset overrides: {offset_overrides}")
+    except Exception as e:
+        print(f"Failed to save offset overrides: {e}")
+
+
+def apply_offset_overrides():
+    """Apply offset overrides to current tree"""
+    for name, override in offset_overrides.items():
+        if name in tree.joints:
+            tree.joints[name].axis_offset = override
 
 
 async def broadcast_scene():
@@ -149,6 +187,8 @@ async def handle_tree_update(payload: dict):
     print(f"Received kinematic tree: {payload.get('name', 'unnamed')}")
     tree_data_json = payload
     tree.load(payload)
+    apply_offset_overrides()
+    tree.update()
     print(f"Loaded tree with joints: {tree.get_joint_names()}")
     await broadcast_scene_init()
 
@@ -167,6 +207,9 @@ async def lifespan(app: FastAPI):
     """Startup and shutdown events"""
     global mqtt_task, tree_data_json, k3d_loader
 
+    # Load offset overrides from config file
+    load_offset_overrides()
+
     # Try to load k3d file if specified
     if K3D_FILE:
         k3d_path = Path(K3D_FILE).expanduser().resolve()
@@ -178,6 +221,8 @@ async def lifespan(app: FastAPI):
                 else:
                     tree_data_json = k3d_loader.load_file(k3d_path)
                 tree.load(tree_data_json)
+                apply_offset_overrides()
+                tree.update()
                 print(f"Loaded K3D: {K3D_FILE}")
                 print(f"Joints: {tree.get_joint_names()}")
                 print(f"Models dir: {k3d_loader.models_dir}")
@@ -292,6 +337,89 @@ async def set_joints(joints: Dict[str, float]):
     tree.update()
     await broadcast_scene()
     return {"status": "ok"}
+
+
+class SetZeroRequest(BaseModel):
+    joint_name: str
+
+
+@app.post("/api/offset/set_zero")
+async def set_zero_offset(request: SetZeroRequest):
+    """Set offset for a joint so that current position becomes zero.
+
+    new_offset = -current_coord / axis_scale + original_offset
+    But since we want (coord + new_offset) * scale = 0, we need:
+    new_offset = -coord (because we want effective_coord = 0 when coord = current)
+    """
+    joint_name = request.joint_name
+    if joint_name not in tree.joints:
+        raise HTTPException(status_code=404, detail=f"Joint not found: {joint_name}")
+
+    joint = tree.joints[joint_name]
+    # To make current position zero: (coord + new_offset) * scale should give the same as (0 + new_offset) * scale
+    # Actually we want: when coord=current, effective_coord=0
+    # effective_coord = (coord + offset) * scale = 0
+    # So offset = -coord
+    new_offset = -joint.coord
+    offset_overrides[joint_name] = new_offset
+    joint.axis_offset = new_offset
+
+    save_offset_overrides()
+    tree.update()
+    await broadcast_scene()
+
+    return {"status": "ok", "joint": joint_name, "offset": new_offset}
+
+
+@app.get("/api/offset/overrides")
+async def get_offset_overrides():
+    """Get all current offset overrides"""
+    return {"overrides": offset_overrides}
+
+
+@app.delete("/api/offset/overrides")
+async def clear_all_offset_overrides():
+    """Clear all offset overrides and reload original values from tree"""
+    global offset_overrides
+    offset_overrides = {}
+    save_offset_overrides()
+
+    # Reload tree to restore original offsets
+    if tree_data_json:
+        tree.load(tree_data_json)
+        tree.update()
+        await broadcast_scene()
+
+    return {"status": "ok"}
+
+
+@app.delete("/api/offset/overrides/{joint_name}")
+async def clear_offset_override(joint_name: str):
+    """Clear offset override for a specific joint"""
+    if joint_name in offset_overrides:
+        del offset_overrides[joint_name]
+        save_offset_overrides()
+
+        # Reload tree to restore original offset for this joint
+        if tree_data_json and joint_name in tree.joints:
+            # Find original offset from tree data
+            original_offset = _find_original_offset(tree_data_json, joint_name)
+            tree.joints[joint_name].axis_offset = original_offset
+            tree.update()
+            await broadcast_scene()
+
+    return {"status": "ok"}
+
+
+def _find_original_offset(node: dict, joint_name: str) -> float:
+    """Recursively find original axis_offset for a joint in tree data"""
+    if node.get("name") == joint_name:
+        return node.get("axis_offset", 0.0)
+    for child in node.get("children", []):
+        result = _find_original_offset(child, joint_name)
+        if result != 0.0 or child.get("name") == joint_name:
+            return result
+    return 0.0
 
 
 @app.post("/api/tree")

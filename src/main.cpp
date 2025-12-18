@@ -40,9 +40,14 @@ std::atomic<bool> g_running{true};
 // Paths
 fs::path g_base_dir;
 fs::path g_static_dir;
+fs::path g_config_dir;
+fs::path g_offset_overrides_file;
 
 // K3D loader
 std::unique_ptr<webkin::K3DLoader> g_k3d_loader;
+
+// Offset overrides
+std::map<std::string, double> g_offset_overrides;
 
 // Transport type
 enum class TransportType
@@ -52,9 +57,91 @@ enum class TransportType
     CROW
 };
 
+// Forward declarations
+std::string read_file(const fs::path &path);
+
 std::string trent_to_json(const nos::trent &t)
 {
     return nos::json::to_string(t);
+}
+
+void load_offset_overrides()
+{
+    g_offset_overrides.clear();
+    if (fs::exists(g_offset_overrides_file))
+    {
+        try
+        {
+            std::string content = read_file(g_offset_overrides_file);
+            nos::trent data = nos::json::parse(content);
+            if (data.is_dict())
+            {
+                for (const auto &[name, value] : data.as_dict())
+                {
+                    g_offset_overrides[name] = value.as_numer_default(0.0);
+                }
+            }
+            nos::println("Loaded offset overrides: ", g_offset_overrides.size(), " entries");
+        }
+        catch (const std::exception &e)
+        {
+            nos::println("Failed to load offset overrides: ", e.what());
+        }
+    }
+}
+
+void save_offset_overrides()
+{
+    try
+    {
+        fs::create_directories(g_config_dir);
+        nos::trent data;
+        data.init(nos::trent::type::dict);
+        for (const auto &[name, value] : g_offset_overrides)
+        {
+            data[name] = value;
+        }
+        std::ofstream file(g_offset_overrides_file);
+        file << nos::json::to_string(data);
+        nos::println("Saved offset overrides: ", g_offset_overrides.size(), " entries");
+    }
+    catch (const std::exception &e)
+    {
+        nos::println("Failed to save offset overrides: ", e.what());
+    }
+}
+
+void apply_offset_overrides()
+{
+    for (const auto &[name, offset] : g_offset_overrides)
+    {
+        auto it = g_tree.joints.find(name);
+        if (it != g_tree.joints.end())
+        {
+            it->second->axis_offset = offset;
+        }
+    }
+}
+
+double find_original_offset(const nos::trent &node, const std::string &joint_name)
+{
+    if (node["name"].as_string_default("") == joint_name)
+    {
+        return node["axis_offset"].as_numer_default(0.0);
+    }
+    const auto &children = node["children"];
+    if (children.is_list())
+    {
+        for (const auto &child : children.as_list())
+        {
+            double result = find_original_offset(child, joint_name);
+            if (result != 0.0 || child["name"].as_string_default("") == joint_name)
+            {
+                return result;
+            }
+        }
+    }
+    return 0.0;
 }
 
 nos::trent make_scene_init_message()
@@ -117,6 +204,8 @@ void on_tree_received(const nos::trent &data)
     std::lock_guard<std::mutex> lock(g_mutex);
     g_tree_data_json = data;
     g_tree.load(data);
+    apply_offset_overrides();
+    g_tree.update();
     nos::println("Loaded kinematic tree: ", data["name"].as_string_default("unnamed"));
     nos::println("Joints: ");
     for (const auto &name : g_tree.get_joint_names())
@@ -308,7 +397,31 @@ int main(int argc, char *argv[])
     }
     g_static_dir = g_base_dir / "static";
 
+    // Setup config directory (XDG Base Directory Specification)
+    const char *xdg_config = std::getenv("XDG_CONFIG_HOME");
+    if (xdg_config)
+    {
+        g_config_dir = fs::path(xdg_config) / "webkin";
+    }
+    else
+    {
+        const char *home = std::getenv("HOME");
+        if (home)
+        {
+            g_config_dir = fs::path(home) / ".config" / "webkin";
+        }
+        else
+        {
+            g_config_dir = "/tmp/webkin";
+        }
+    }
+    g_offset_overrides_file = g_config_dir / "offset_overrides.json";
+
+    // Load offset overrides
+    load_offset_overrides();
+
     nos::println("Static dir: ", g_static_dir.string());
+    nos::println("Config dir: ", g_config_dir.string());
 
     // Try to load K3D file if specified
     if (!k3d_file.empty())
@@ -338,6 +451,8 @@ int main(int argc, char *argv[])
                     g_tree_data_json = g_k3d_loader->load_file(k3d_path);
                 }
                 g_tree.load(g_tree_data_json);
+                apply_offset_overrides();
+                g_tree.update();
                 nos::println("Loaded K3D: ", k3d_file);
                 nos::println("Joints: ");
                 for (const auto &name : g_tree.get_joint_names())
@@ -556,6 +671,118 @@ int main(int argc, char *argv[])
         response["joints"] = g_tree.get_joint_names_trent();
 
         crowhttp::response res(200, trent_to_json(response));
+        res.set_header("Content-Type", "application/json");
+        return res; });
+
+    // REST API: Set zero offset for a joint
+    CROW_ROUTE(app, "/api/offset/set_zero").methods("POST"_method)([](const crowhttp::request &req)
+                                                                   {
+        std::lock_guard<std::mutex> lock(g_mutex);
+
+        nos::trent body = nos::json::parse(req.body);
+        std::string joint_name = body["joint_name"].as_string_default("");
+
+        if (joint_name.empty())
+        {
+            crowhttp::response res(400, R"({"error": "joint_name is required"})");
+            res.set_header("Content-Type", "application/json");
+            return res;
+        }
+
+        auto it = g_tree.joints.find(joint_name);
+        if (it == g_tree.joints.end())
+        {
+            crowhttp::response res(404, R"({"error": "Joint not found"})");
+            res.set_header("Content-Type", "application/json");
+            return res;
+        }
+
+        // Set offset so that current position becomes zero
+        double new_offset = -it->second->coord;
+        g_offset_overrides[joint_name] = new_offset;
+        it->second->axis_offset = new_offset;
+
+        save_offset_overrides();
+        g_tree.update();
+        broadcast_scene_update();
+
+        nos::trent response;
+        response.init(nos::trent::type::dict);
+        response["status"] = "ok";
+        response["joint"] = joint_name;
+        response["offset"] = new_offset;
+
+        crowhttp::response res(200, trent_to_json(response));
+        res.set_header("Content-Type", "application/json");
+        return res; });
+
+    // REST API: Get offset overrides
+    CROW_ROUTE(app, "/api/offset/overrides")
+    ([]()
+     {
+        std::lock_guard<std::mutex> lock(g_mutex);
+
+        nos::trent overrides;
+        overrides.init(nos::trent::type::dict);
+        for (const auto &[name, value] : g_offset_overrides)
+        {
+            overrides[name] = value;
+        }
+
+        nos::trent response;
+        response.init(nos::trent::type::dict);
+        response["overrides"] = std::move(overrides);
+
+        crowhttp::response res(200, trent_to_json(response));
+        res.set_header("Content-Type", "application/json");
+        return res; });
+
+    // REST API: Clear all offset overrides
+    CROW_ROUTE(app, "/api/offset/overrides").methods("DELETE"_method)([]()
+                                                                      {
+        std::lock_guard<std::mutex> lock(g_mutex);
+
+        g_offset_overrides.clear();
+        save_offset_overrides();
+
+        // Reload tree to restore original offsets
+        if (!g_tree_data_json.is_nil())
+        {
+            g_tree.load(g_tree_data_json);
+            g_tree.update();
+            broadcast_scene_update();
+        }
+
+        crowhttp::response res(200, R"({"status": "ok"})");
+        res.set_header("Content-Type", "application/json");
+        return res; });
+
+    // REST API: Clear offset override for specific joint
+    CROW_ROUTE(app, "/api/offset/overrides/<string>").methods("DELETE"_method)([](const std::string &joint_name)
+                                                                                {
+        std::lock_guard<std::mutex> lock(g_mutex);
+
+        auto it = g_offset_overrides.find(joint_name);
+        if (it != g_offset_overrides.end())
+        {
+            g_offset_overrides.erase(it);
+            save_offset_overrides();
+
+            // Restore original offset
+            if (!g_tree_data_json.is_nil())
+            {
+                auto joint_it = g_tree.joints.find(joint_name);
+                if (joint_it != g_tree.joints.end())
+                {
+                    double original = find_original_offset(g_tree_data_json, joint_name);
+                    joint_it->second->axis_offset = original;
+                    g_tree.update();
+                    broadcast_scene_update();
+                }
+            }
+        }
+
+        crowhttp::response res(200, R"({"status": "ok"})");
         res.set_header("Content-Type", "application/json");
         return res; });
 

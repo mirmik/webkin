@@ -7,6 +7,7 @@ let kinematicScene;
 let ws;
 let jointNames = [];
 let manualMode = false;  // false = server control, true = local manual control
+let offsetOverrides = {};  // Track which joints have offset overrides
 
 function init() {
     // Scene setup
@@ -60,6 +61,12 @@ function init() {
     // Setup mode toggle
     setupModeToggle();
 
+    // Setup clear overrides button
+    setupClearOverridesButton();
+
+    // Load offset overrides
+    loadOffsetOverrides();
+
     // Connect WebSocket
     connectWebSocket();
 
@@ -93,6 +100,72 @@ function setupModeToggle() {
 
         console.log(`Mode: ${manualMode ? 'manual' : 'server'}`);
     });
+}
+
+function setupClearOverridesButton() {
+    const btn = document.getElementById('clear-overrides');
+    btn.addEventListener('click', async () => {
+        try {
+            const response = await fetch('/api/offset/overrides', { method: 'DELETE' });
+            if (response.ok) {
+                offsetOverrides = {};
+                updateOverrideButtons();
+                console.log('Cleared all offset overrides');
+            }
+        } catch (error) {
+            console.error('Failed to clear overrides:', error);
+        }
+    });
+}
+
+async function loadOffsetOverrides() {
+    try {
+        const response = await fetch('/api/offset/overrides');
+        const data = await response.json();
+        offsetOverrides = data.overrides || {};
+        updateOverrideButtons();
+    } catch (error) {
+        console.error('Failed to load offset overrides:', error);
+    }
+}
+
+function updateOverrideButtons() {
+    // Update all zero buttons to show override status
+    for (const jointName of jointNames) {
+        const btn = document.getElementById(`zero-${jointName}`);
+        if (btn) {
+            if (offsetOverrides[jointName] !== undefined) {
+                btn.classList.add('has-override');
+                btn.textContent = '✓ Zero';
+            } else {
+                btn.classList.remove('has-override');
+                btn.textContent = 'Set Zero';
+            }
+        }
+    }
+
+    // Update clear button state
+    const clearBtn = document.getElementById('clear-overrides');
+    clearBtn.disabled = Object.keys(offsetOverrides).length === 0;
+}
+
+async function setZeroOffset(jointName) {
+    try {
+        const response = await fetch('/api/offset/set_zero', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ joint_name: jointName })
+        });
+
+        if (response.ok) {
+            const data = await response.json();
+            offsetOverrides[jointName] = data.offset;
+            updateOverrideButtons();
+            console.log(`Set zero for ${jointName}: offset = ${data.offset}`);
+        }
+    } catch (error) {
+        console.error('Failed to set zero:', error);
+    }
 }
 
 async function loadTreeData() {
@@ -165,6 +238,9 @@ function handleMessage(message) {
             // Reload tree data for local calculations
             loadTreeData();
 
+            // Reload offset overrides (tree may have changed)
+            loadOffsetOverrides();
+
             console.log('=== SCENE_INIT complete ===');
             break;
 
@@ -190,14 +266,20 @@ function createJointSliders(joints) {
         const max = Math.PI;
         const step = 0.01;
 
+        const hasOverride = offsetOverrides[jointName] !== undefined;
+
         div.innerHTML = `
             <label>${jointName}</label>
-            <input type="range"
-                   id="slider-${jointName}"
-                   min="${min}"
-                   max="${max}"
-                   step="${step}"
-                   value="0">
+            <div class="slider-row">
+                <input type="range"
+                       id="slider-${jointName}"
+                       min="${min}"
+                       max="${max}"
+                       step="${step}"
+                       value="0">
+                <button class="btn-zero ${hasOverride ? 'has-override' : ''}"
+                        id="zero-${jointName}">${hasOverride ? '✓ Zero' : 'Set Zero'}</button>
+            </div>
             <span class="slider-value" id="value-${jointName}">0°</span>
         `;
 
@@ -205,6 +287,7 @@ function createJointSliders(joints) {
 
         const slider = div.querySelector('input');
         const valueSpan = div.querySelector('.slider-value');
+        const zeroBtn = div.querySelector('.btn-zero');
 
         slider.addEventListener('input', (e) => {
             const value = parseFloat(e.target.value);
@@ -216,7 +299,13 @@ function createJointSliders(joints) {
                 kinematicScene.updateLocal();
             }
         });
+
+        zeroBtn.addEventListener('click', () => {
+            setZeroOffset(jointName);
+        });
     }
+
+    updateOverrideButtons();
 }
 
 function onWindowResize() {
