@@ -41,13 +41,13 @@ std::atomic<bool> g_running{true};
 fs::path g_base_dir;
 fs::path g_static_dir;
 fs::path g_config_dir;
-fs::path g_offset_overrides_file;
+fs::path g_axis_overrides_file;
 
 // K3D loader
 std::unique_ptr<webkin::K3DLoader> g_k3d_loader;
 
-// Offset overrides
-std::map<std::string, double> g_offset_overrides;
+// Axis overrides: {axis_name: {axis_offset, axis_scale, slider_min, slider_max}}
+std::map<std::string, std::map<std::string, double>> g_axis_overrides;
 
 // Transport type
 enum class TransportType
@@ -65,83 +65,124 @@ std::string trent_to_json(const nos::trent &t)
     return nos::json::to_string(t);
 }
 
-void load_offset_overrides()
+void load_axis_overrides()
 {
-    g_offset_overrides.clear();
-    if (fs::exists(g_offset_overrides_file))
+    g_axis_overrides.clear();
+    if (fs::exists(g_axis_overrides_file))
     {
         try
         {
-            std::string content = read_file(g_offset_overrides_file);
+            std::string content = read_file(g_axis_overrides_file);
             nos::trent data = nos::json::parse(content);
             if (data.is_dict())
             {
-                for (const auto &[name, value] : data.as_dict())
+                for (const auto &[name, params] : data.as_dict())
                 {
-                    g_offset_overrides[name] = value.as_numer_default(0.0);
+                    if (params.is_dict())
+                    {
+                        for (const auto &[key, value] : params.as_dict())
+                        {
+                            g_axis_overrides[name][key] = value.as_numer_default(0.0);
+                        }
+                    }
                 }
             }
-            nos::println("Loaded offset overrides: ", g_offset_overrides.size(), " entries");
+            nos::println("Loaded axis overrides: ", g_axis_overrides.size(), " entries");
         }
         catch (const std::exception &e)
         {
-            nos::println("Failed to load offset overrides: ", e.what());
+            nos::println("Failed to load axis overrides: ", e.what());
         }
     }
 }
 
-void save_offset_overrides()
+void save_axis_overrides()
 {
     try
     {
         fs::create_directories(g_config_dir);
         nos::trent data;
         data.init(nos::trent::type::dict);
-        for (const auto &[name, value] : g_offset_overrides)
+        for (const auto &[name, params] : g_axis_overrides)
         {
-            data[name] = value;
+            nos::trent joint_data;
+            joint_data.init(nos::trent::type::dict);
+            for (const auto &[key, value] : params)
+            {
+                joint_data[key] = value;
+            }
+            data[name] = std::move(joint_data);
         }
-        std::ofstream file(g_offset_overrides_file);
+        std::ofstream file(g_axis_overrides_file);
         file << nos::json::to_string(data);
-        nos::println("Saved offset overrides: ", g_offset_overrides.size(), " entries");
+        nos::println("Saved axis overrides: ", g_axis_overrides.size(), " entries");
     }
     catch (const std::exception &e)
     {
-        nos::println("Failed to save offset overrides: ", e.what());
+        nos::println("Failed to save axis overrides: ", e.what());
     }
 }
 
-void apply_offset_overrides()
+void apply_axis_overrides()
 {
-    for (const auto &[name, offset] : g_offset_overrides)
+    for (const auto &[name, params] : g_axis_overrides)
     {
         auto it = g_tree.joints.find(name);
         if (it != g_tree.joints.end())
         {
-            it->second->axis_offset = offset;
+            auto *joint = it->second;
+            auto offset_it = params.find("axis_offset");
+            if (offset_it != params.end())
+                joint->axis_offset = offset_it->second;
+
+            auto scale_it = params.find("axis_scale");
+            if (scale_it != params.end())
+                joint->axis_scale = scale_it->second;
+
+            auto min_it = params.find("slider_min");
+            if (min_it != params.end())
+                joint->slider_min = min_it->second;
+
+            auto max_it = params.find("slider_max");
+            if (max_it != params.end())
+                joint->slider_max = max_it->second;
         }
     }
 }
 
-double find_original_offset(const nos::trent &node, const std::string &joint_name)
+nos::trent find_original_axis_params(const nos::trent &node, const std::string &joint_name)
 {
     if (node["name"].as_string_default("") == joint_name)
     {
-        return node["axis_offset"].as_numer_default(0.0);
+        nos::trent result;
+        result.init(nos::trent::type::dict);
+        std::string jtype = node["type"].as_string_default("transform");
+        double default_min = -180.0, default_max = 180.0;
+        if (jtype == "actuator")
+        {
+            default_min = -1000.0;
+            default_max = 1000.0;
+        }
+        result["axis_offset"] = node["axis_offset"].as_numer_default(0.0);
+        result["axis_scale"] = node["axis_scale"].as_numer_default(1.0);
+        result["slider_min"] = node["slider_min"].as_numer_default(default_min);
+        result["slider_max"] = node["slider_max"].as_numer_default(default_max);
+        return result;
     }
     const auto &children = node["children"];
     if (children.is_list())
     {
         for (const auto &child : children.as_list())
         {
-            double result = find_original_offset(child, joint_name);
-            if (result != 0.0 || child["name"].as_string_default("") == joint_name)
+            nos::trent result = find_original_axis_params(child, joint_name);
+            if (!result.is_nil())
             {
                 return result;
             }
         }
     }
-    return 0.0;
+    nos::trent empty;
+    return empty;
 }
 
 nos::trent make_scene_init_message()
@@ -151,6 +192,7 @@ nos::trent make_scene_init_message()
     msg["type"] = "scene_init";
     msg["nodes"] = g_tree.get_scene_data();
     msg["joints"] = g_tree.get_joint_names_trent();
+    msg["jointsInfo"] = g_tree.get_joints_info();
     msg["zUp"] = g_z_up;
     return msg;
 }
@@ -161,6 +203,7 @@ nos::trent make_scene_update_message()
     msg.init(nos::trent::type::dict);
     msg["type"] = "scene_update";
     msg["nodes"] = g_tree.get_scene_data();
+    msg["jointsInfo"] = g_tree.get_joints_info();
     return msg;
 }
 
@@ -204,7 +247,7 @@ void on_tree_received(const nos::trent &data)
     std::lock_guard<std::mutex> lock(g_mutex);
     g_tree_data_json = data;
     g_tree.load(data);
-    apply_offset_overrides();
+    apply_axis_overrides();
     g_tree.update();
     nos::println("Loaded kinematic tree: ", data["name"].as_string_default("unnamed"));
     nos::println("Joints: ");
@@ -415,10 +458,10 @@ int main(int argc, char *argv[])
             g_config_dir = "/tmp/webkin";
         }
     }
-    g_offset_overrides_file = g_config_dir / "offset_overrides.json";
+    g_axis_overrides_file = g_config_dir / "axis_overrides.json";
 
-    // Load offset overrides
-    load_offset_overrides();
+    // Load axis overrides
+    load_axis_overrides();
 
     nos::println("Static dir: ", g_static_dir.string());
     nos::println("Config dir: ", g_config_dir.string());
@@ -451,7 +494,7 @@ int main(int argc, char *argv[])
                     g_tree_data_json = g_k3d_loader->load_file(k3d_path);
                 }
                 g_tree.load(g_tree_data_json);
-                apply_offset_overrides();
+                apply_axis_overrides();
                 g_tree.update();
                 nos::println("Loaded K3D: ", k3d_file);
                 nos::println("Joints: ");
@@ -699,10 +742,10 @@ int main(int argc, char *argv[])
 
         // Set offset so that current position becomes zero
         double new_offset = -it->second->coord;
-        g_offset_overrides[joint_name] = new_offset;
+        g_axis_overrides[joint_name]["axis_offset"] = new_offset;
         it->second->axis_offset = new_offset;
 
-        save_offset_overrides();
+        save_axis_overrides();
         g_tree.update();
         broadcast_scene_update();
 
@@ -716,17 +759,90 @@ int main(int argc, char *argv[])
         res.set_header("Content-Type", "application/json");
         return res; });
 
-    // REST API: Get offset overrides
-    CROW_ROUTE(app, "/api/offset/overrides")
+    // REST API: Set axis override (POST /api/axis/override)
+    CROW_ROUTE(app, "/api/axis/override").methods("POST"_method)([](const crowhttp::request &req)
+                                                                 {
+        std::lock_guard<std::mutex> lock(g_mutex);
+
+        nos::trent body = nos::json::parse(req.body);
+        std::string joint_name = body["joint_name"].as_string_default("");
+
+        if (joint_name.empty())
+        {
+            crowhttp::response res(400, R"({"error": "joint_name is required"})");
+            res.set_header("Content-Type", "application/json");
+            return res;
+        }
+
+        auto it = g_tree.joints.find(joint_name);
+        if (it == g_tree.joints.end())
+        {
+            crowhttp::response res(404, R"({"error": "Joint not found"})");
+            res.set_header("Content-Type", "application/json");
+            return res;
+        }
+
+        // Update overrides from body
+        if (body["axis_offset"].is_numer())
+        {
+            double val = body["axis_offset"].as_numer();
+            g_axis_overrides[joint_name]["axis_offset"] = val;
+            it->second->axis_offset = val;
+            nos::println("Set axis_offset for ", joint_name, " = ", val);
+        }
+        if (body["axis_scale"].is_numer())
+        {
+            double val = body["axis_scale"].as_numer();
+            g_axis_overrides[joint_name]["axis_scale"] = val;
+            it->second->axis_scale = val;
+            nos::println("Set axis_scale for ", joint_name, " = ", val);
+        }
+        if (body["slider_min"].is_numer())
+        {
+            double val = body["slider_min"].as_numer();
+            g_axis_overrides[joint_name]["slider_min"] = val;
+            it->second->slider_min = val;
+            nos::println("Set slider_min for ", joint_name, " = ", val);
+        }
+        if (body["slider_max"].is_numer())
+        {
+            double val = body["slider_max"].as_numer();
+            g_axis_overrides[joint_name]["slider_max"] = val;
+            it->second->slider_max = val;
+            nos::println("Set slider_max for ", joint_name, " = ", val);
+        }
+
+        save_axis_overrides();
+        g_tree.update();
+        broadcast_scene_update();
+        nos::println("Applied axis override for ", joint_name, ", broadcasted update");
+
+        nos::trent response;
+        response.init(nos::trent::type::dict);
+        response["status"] = "ok";
+        response["joint"] = joint_name;
+
+        crowhttp::response res(200, trent_to_json(response));
+        res.set_header("Content-Type", "application/json");
+        return res; });
+
+    // REST API: Get axis overrides
+    CROW_ROUTE(app, "/api/axis/overrides")
     ([]()
      {
         std::lock_guard<std::mutex> lock(g_mutex);
 
         nos::trent overrides;
         overrides.init(nos::trent::type::dict);
-        for (const auto &[name, value] : g_offset_overrides)
+        for (const auto &[name, params] : g_axis_overrides)
         {
-            overrides[name] = value;
+            nos::trent joint_params;
+            joint_params.init(nos::trent::type::dict);
+            for (const auto &[key, value] : params)
+            {
+                joint_params[key] = value;
+            }
+            overrides[name] = std::move(joint_params);
         }
 
         nos::trent response;
@@ -737,15 +853,15 @@ int main(int argc, char *argv[])
         res.set_header("Content-Type", "application/json");
         return res; });
 
-    // REST API: Clear all offset overrides
-    CROW_ROUTE(app, "/api/offset/overrides").methods("DELETE"_method)([]()
-                                                                      {
+    // REST API: Clear all axis overrides
+    CROW_ROUTE(app, "/api/axis/overrides").methods("DELETE"_method)([]()
+                                                                    {
         std::lock_guard<std::mutex> lock(g_mutex);
 
-        g_offset_overrides.clear();
-        save_offset_overrides();
+        g_axis_overrides.clear();
+        save_axis_overrides();
 
-        // Reload tree to restore original offsets
+        // Reload tree to restore original values
         if (!g_tree_data_json.is_nil())
         {
             g_tree.load(g_tree_data_json);
@@ -757,27 +873,36 @@ int main(int argc, char *argv[])
         res.set_header("Content-Type", "application/json");
         return res; });
 
-    // REST API: Clear offset override for specific joint
-    CROW_ROUTE(app, "/api/offset/overrides/<string>").methods("DELETE"_method)([](const std::string &joint_name)
-                                                                                {
+    // REST API: Clear axis overrides for specific joint
+    CROW_ROUTE(app, "/api/axis/overrides/<string>").methods("DELETE"_method)([](const std::string &joint_name)
+                                                                              {
         std::lock_guard<std::mutex> lock(g_mutex);
 
-        auto it = g_offset_overrides.find(joint_name);
-        if (it != g_offset_overrides.end())
+        auto it = g_axis_overrides.find(joint_name);
+        if (it != g_axis_overrides.end())
         {
-            g_offset_overrides.erase(it);
-            save_offset_overrides();
+            g_axis_overrides.erase(it);
+            save_axis_overrides();
 
-            // Restore original offset
+            // Restore original values
             if (!g_tree_data_json.is_nil())
             {
                 auto joint_it = g_tree.joints.find(joint_name);
                 if (joint_it != g_tree.joints.end())
                 {
-                    double original = find_original_offset(g_tree_data_json, joint_name);
-                    joint_it->second->axis_offset = original;
-                    g_tree.update();
-                    broadcast_scene_update();
+                    nos::trent original = find_original_axis_params(g_tree_data_json, joint_name);
+                    if (!original.is_nil())
+                    {
+                        joint_it->second->axis_offset = original["axis_offset"].as_numer_default(0.0);
+                        joint_it->second->axis_scale = original["axis_scale"].as_numer_default(1.0);
+                        std::string jtype = joint_it->second->type;
+                        double default_min = (jtype == "actuator") ? -1000.0 : -180.0;
+                        double default_max = (jtype == "actuator") ? 1000.0 : 180.0;
+                        joint_it->second->slider_min = original["slider_min"].as_numer_default(default_min);
+                        joint_it->second->slider_max = original["slider_max"].as_numer_default(default_max);
+                        g_tree.update();
+                        broadcast_scene_update();
+                    }
                 }
             }
         }

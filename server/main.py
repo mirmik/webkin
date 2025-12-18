@@ -23,7 +23,7 @@ from .k3d_loader import K3DLoader
 
 # Offset overrides storage (XDG Base Directory Specification)
 CONFIG_DIR = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "webkin"
-OFFSET_OVERRIDES_FILE = CONFIG_DIR / "offset_overrides.json"
+AXIS_OVERRIDES_FILE = CONFIG_DIR / "axis_overrides.json"
 
 
 
@@ -48,36 +48,47 @@ tree_data_json: dict = {}  # Store raw tree data for /api/tree endpoint
 clients: List[WebSocket] = []
 mqtt_task = None
 k3d_loader: Optional[K3DLoader] = None  # Current loaded k3d file
-offset_overrides: Dict[str, float] = {}  # axis_name -> offset_override
+# axis_overrides: {axis_name: {axis_offset, axis_scale, slider_min, slider_max}}
+axis_overrides: Dict[str, Dict[str, float]] = {}
 
 
-def load_offset_overrides():
-    """Load offset overrides from config file"""
-    global offset_overrides
-    if OFFSET_OVERRIDES_FILE.exists():
+def load_axis_overrides():
+    """Load axis overrides from config file"""
+    global axis_overrides
+    if AXIS_OVERRIDES_FILE.exists():
         try:
-            offset_overrides = json.loads(OFFSET_OVERRIDES_FILE.read_text())
-            print(f"Loaded offset overrides: {offset_overrides}")
+            axis_overrides = json.loads(AXIS_OVERRIDES_FILE.read_text())
+            print(f"Loaded axis overrides: {axis_overrides}")
         except Exception as e:
-            print(f"Failed to load offset overrides: {e}")
-            offset_overrides = {}
+            print(f"Failed to load axis overrides: {e}")
+            axis_overrides = {}
     else:
-        offset_overrides = {}
+        axis_overrides = {}
 
 
-def save_offset_overrides():
-    """Save offset overrides to config file"""
+def save_axis_overrides():
+    """Save axis overrides to config file"""
     try:
         CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-        OFFSET_OVERRIDES_FILE.write_text(json.dumps(offset_overrides, indent=2))
-        print(f"Saved offset overrides: {offset_overrides}")
+        AXIS_OVERRIDES_FILE.write_text(json.dumps(axis_overrides, indent=2))
+        print(f"Saved axis overrides: {axis_overrides}")
     except Exception as e:
-        print(f"Failed to save offset overrides: {e}")
+        print(f"Failed to save axis overrides: {e}")
 
 
-def apply_offset_overrides():
-    """Apply offset overrides to current tree"""
-    for name, override in offset_overrides.items():
+def apply_axis_overrides():
+    """Apply axis overrides to current tree"""
+    for name, overrides in axis_overrides.items():
+        if name in tree.joints:
+            joint = tree.joints[name]
+            if "axis_offset" in overrides:
+                joint.axis_offset = overrides["axis_offset"]
+            if "axis_scale" in overrides:
+                joint.axis_scale = overrides["axis_scale"]
+            if "slider_min" in overrides:
+                joint.slider_min = overrides["slider_min"]
+            if "slider_max" in overrides:
+                joint.slider_max = overrides["slider_max"]
         if name in tree.joints:
             tree.joints[name].axis_offset = override
 
@@ -111,6 +122,7 @@ async def broadcast_scene_init():
         "type": "scene_init",
         "nodes": scene_data,
         "joints": tree.get_joint_names(),
+        "jointsInfo": tree.get_joints_info(),
         "zUp": Z_UP
     })
 
@@ -187,7 +199,7 @@ async def handle_tree_update(payload: dict):
     print(f"Received kinematic tree: {payload.get('name', 'unnamed')}")
     tree_data_json = payload
     tree.load(payload)
-    apply_offset_overrides()
+    apply_axis_overrides()
     tree.update()
     print(f"Loaded tree with joints: {tree.get_joint_names()}")
     await broadcast_scene_init()
@@ -207,8 +219,8 @@ async def lifespan(app: FastAPI):
     """Startup and shutdown events"""
     global mqtt_task, tree_data_json, k3d_loader
 
-    # Load offset overrides from config file
-    load_offset_overrides()
+    # Load axis overrides from config file
+    load_axis_overrides()
 
     # Try to load k3d file if specified
     if K3D_FILE:
@@ -221,7 +233,7 @@ async def lifespan(app: FastAPI):
                 else:
                     tree_data_json = k3d_loader.load_file(k3d_path)
                 tree.load(tree_data_json)
-                apply_offset_overrides()
+                apply_axis_overrides()
                 tree.update()
                 print(f"Loaded K3D: {K3D_FILE}")
                 print(f"Joints: {tree.get_joint_names()}")
@@ -296,6 +308,7 @@ async def websocket_endpoint(websocket: WebSocket):
         "type": "scene_init",
         "nodes": scene_data,
         "joints": tree.get_joint_names(),
+        "jointsInfo": tree.get_joints_info(),
         "zUp": Z_UP
     }))
 
@@ -343,6 +356,14 @@ class SetZeroRequest(BaseModel):
     joint_name: str
 
 
+class AxisOverrideRequest(BaseModel):
+    joint_name: str
+    axis_offset: Optional[float] = None
+    axis_scale: Optional[float] = None
+    slider_min: Optional[float] = None
+    slider_max: Optional[float] = None
+
+
 @app.post("/api/offset/set_zero")
 async def set_zero_offset(request: SetZeroRequest):
     """Set offset for a joint so that current position becomes zero.
@@ -361,65 +382,120 @@ async def set_zero_offset(request: SetZeroRequest):
     # effective_coord = (coord + offset) * scale = 0
     # So offset = -coord
     new_offset = -joint.coord
-    offset_overrides[joint_name] = new_offset
+
+    # Update or create override entry
+    if joint_name not in axis_overrides:
+        axis_overrides[joint_name] = {}
+    axis_overrides[joint_name]["axis_offset"] = new_offset
     joint.axis_offset = new_offset
 
-    save_offset_overrides()
+    save_axis_overrides()
     tree.update()
     await broadcast_scene()
 
     return {"status": "ok", "joint": joint_name, "offset": new_offset}
 
 
-@app.get("/api/offset/overrides")
-async def get_offset_overrides():
-    """Get all current offset overrides"""
-    return {"overrides": offset_overrides}
+@app.post("/api/axis/override")
+async def set_axis_override(request: AxisOverrideRequest):
+    """Set axis override parameters (offset, scale, slider limits)"""
+    joint_name = request.joint_name
+    if joint_name not in tree.joints:
+        raise HTTPException(status_code=404, detail=f"Joint not found: {joint_name}")
+
+    joint = tree.joints[joint_name]
+
+    # Update or create override entry
+    if joint_name not in axis_overrides:
+        axis_overrides[joint_name] = {}
+
+    if request.axis_offset is not None:
+        axis_overrides[joint_name]["axis_offset"] = request.axis_offset
+        joint.axis_offset = request.axis_offset
+
+    if request.axis_scale is not None:
+        axis_overrides[joint_name]["axis_scale"] = request.axis_scale
+        joint.axis_scale = request.axis_scale
+
+    if request.slider_min is not None:
+        axis_overrides[joint_name]["slider_min"] = request.slider_min
+        joint.slider_min = request.slider_min
+
+    if request.slider_max is not None:
+        axis_overrides[joint_name]["slider_max"] = request.slider_max
+        joint.slider_max = request.slider_max
+
+    save_axis_overrides()
+    tree.update()
+    await broadcast_scene_init()  # Send updated jointsInfo
+
+    return {"status": "ok", "joint": joint_name, "overrides": axis_overrides.get(joint_name, {})}
 
 
-@app.delete("/api/offset/overrides")
-async def clear_all_offset_overrides():
-    """Clear all offset overrides and reload original values from tree"""
-    global offset_overrides
-    offset_overrides = {}
-    save_offset_overrides()
+@app.get("/api/axis/overrides")
+async def get_axis_overrides():
+    """Get all current axis overrides"""
+    return {"overrides": axis_overrides}
 
-    # Reload tree to restore original offsets
+
+@app.delete("/api/axis/overrides")
+async def clear_all_axis_overrides():
+    """Clear all axis overrides and reload original values from tree"""
+    global axis_overrides
+    axis_overrides = {}
+    save_axis_overrides()
+
+    # Reload tree to restore original values
     if tree_data_json:
         tree.load(tree_data_json)
         tree.update()
-        await broadcast_scene()
+        await broadcast_scene_init()
 
     return {"status": "ok"}
 
 
-@app.delete("/api/offset/overrides/{joint_name}")
-async def clear_offset_override(joint_name: str):
-    """Clear offset override for a specific joint"""
-    if joint_name in offset_overrides:
-        del offset_overrides[joint_name]
-        save_offset_overrides()
+@app.delete("/api/axis/overrides/{joint_name}")
+async def clear_axis_override(joint_name: str):
+    """Clear all overrides for a specific joint"""
+    if joint_name in axis_overrides:
+        del axis_overrides[joint_name]
+        save_axis_overrides()
 
-        # Reload tree to restore original offset for this joint
+        # Reload tree to restore original values for this joint
         if tree_data_json and joint_name in tree.joints:
-            # Find original offset from tree data
-            original_offset = _find_original_offset(tree_data_json, joint_name)
-            tree.joints[joint_name].axis_offset = original_offset
+            original = _find_original_axis_params(tree_data_json, joint_name)
+            joint = tree.joints[joint_name]
+            joint.axis_offset = original.get("axis_offset", 0.0)
+            joint.axis_scale = original.get("axis_scale", 1.0)
+            joint.slider_min = original.get("slider_min", -180.0)
+            joint.slider_max = original.get("slider_max", 180.0)
             tree.update()
-            await broadcast_scene()
+            await broadcast_scene_init()
 
     return {"status": "ok"}
 
 
-def _find_original_offset(node: dict, joint_name: str) -> float:
-    """Recursively find original axis_offset for a joint in tree data"""
+def _find_original_axis_params(node: dict, joint_name: str) -> dict:
+    """Recursively find original axis parameters for a joint in tree data"""
     if node.get("name") == joint_name:
-        return node.get("axis_offset", 0.0)
+        jtype = node.get("type", "transform")
+        if jtype == "rotator":
+            default_min, default_max = -180.0, 180.0
+        elif jtype == "actuator":
+            default_min, default_max = -1000.0, 1000.0
+        else:
+            default_min, default_max = -100.0, 100.0
+        return {
+            "axis_offset": node.get("axis_offset", 0.0),
+            "axis_scale": node.get("axis_scale", 1.0),
+            "slider_min": node.get("slider_min", default_min),
+            "slider_max": node.get("slider_max", default_max),
+        }
     for child in node.get("children", []):
-        result = _find_original_offset(child, joint_name)
-        if result != 0.0 or child.get("name") == joint_name:
+        result = _find_original_axis_params(child, joint_name)
+        if result:
             return result
-    return 0.0
+    return {}
 
 
 @app.post("/api/tree")

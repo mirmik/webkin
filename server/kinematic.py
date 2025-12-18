@@ -106,6 +106,17 @@ class KinematicNode:
         self.axis_offset = data.get("axis_offset", 0.0)
         self.axis_scale = data.get("axis_scale", 1.0)
 
+        # Slider limits in user units (before scale/offset transformation)
+        # Default: ±180 for rotator (degrees), ±1000 for actuator (mm)
+        if self.type == "rotator":
+            default_min, default_max = -180.0, 180.0
+        elif self.type == "actuator":
+            default_min, default_max = -1000.0, 1000.0
+        else:
+            default_min, default_max = -100.0, 100.0
+        self.slider_min = data.get("slider_min", default_min)
+        self.slider_max = data.get("slider_max", default_max)
+
         # Current joint coordinate
         self.coord = 0.0
 
@@ -217,3 +228,16 @@ class KinematicTree:
     def get_joint_names(self) -> List[str]:
         """Get list of joint names"""
         return list(self.joints.keys())
+
+    def get_joints_info(self) -> Dict[str, dict]:
+        """Get detailed info about all joints for UI"""
+        result = {}
+        for name, joint in self.joints.items():
+            result[name] = {
+                "type": joint.type,
+                "slider_min": joint.slider_min,
+                "slider_max": joint.slider_max,
+                "axis_scale": joint.axis_scale,
+                "axis_offset": joint.axis_offset,
+            }
+        return result

@@ -6,8 +6,9 @@ let scene, camera, renderer, controls;
 let kinematicScene;
 let ws;
 let jointNames = [];
+let jointsInfo = {};  // Joint metadata: {name: {type, slider_min, slider_max, axis_scale, axis_offset}}
 let manualMode = false;  // false = server control, true = local manual control
-let offsetOverrides = {};  // Track which joints have offset overrides
+let axisOverrides = {};  // Track which joints have axis overrides
 
 function init() {
     // Scene setup
@@ -64,8 +65,8 @@ function init() {
     // Setup clear overrides button
     setupClearOverridesButton();
 
-    // Load offset overrides
-    loadOffsetOverrides();
+    // Load axis overrides
+    loadAxisOverrides();
 
     // Connect WebSocket
     connectWebSocket();
@@ -106,11 +107,11 @@ function setupClearOverridesButton() {
     const btn = document.getElementById('clear-overrides');
     btn.addEventListener('click', async () => {
         try {
-            const response = await fetch('/api/offset/overrides', { method: 'DELETE' });
+            const response = await fetch('/api/axis/overrides', { method: 'DELETE' });
             if (response.ok) {
-                offsetOverrides = {};
+                axisOverrides = {};
                 updateOverrideButtons();
-                console.log('Cleared all offset overrides');
+                console.log('Cleared all axis overrides');
             }
         } catch (error) {
             console.error('Failed to clear overrides:', error);
@@ -118,14 +119,14 @@ function setupClearOverridesButton() {
     });
 }
 
-async function loadOffsetOverrides() {
+async function loadAxisOverrides() {
     try {
-        const response = await fetch('/api/offset/overrides');
+        const response = await fetch('/api/axis/overrides');
         const data = await response.json();
-        offsetOverrides = data.overrides || {};
+        axisOverrides = data.overrides || {};
         updateOverrideButtons();
     } catch (error) {
-        console.error('Failed to load offset overrides:', error);
+        console.error('Failed to load axis overrides:', error);
     }
 }
 
@@ -134,7 +135,8 @@ function updateOverrideButtons() {
     for (const jointName of jointNames) {
         const btn = document.getElementById(`zero-${jointName}`);
         if (btn) {
-            if (offsetOverrides[jointName] !== undefined) {
+            const hasOffset = axisOverrides[jointName]?.axis_offset !== undefined;
+            if (hasOffset) {
                 btn.classList.add('has-override');
                 btn.textContent = '✓ Zero';
             } else {
@@ -142,11 +144,22 @@ function updateOverrideButtons() {
                 btn.textContent = 'Set Zero';
             }
         }
+
+        // Update settings button to show if there are any overrides
+        const settingsBtn = document.getElementById(`settings-${jointName}`);
+        if (settingsBtn) {
+            const hasOverrides = axisOverrides[jointName] && Object.keys(axisOverrides[jointName]).length > 0;
+            if (hasOverrides) {
+                settingsBtn.classList.add('active');
+            } else {
+                settingsBtn.classList.remove('active');
+            }
+        }
     }
 
     // Update clear button state
     const clearBtn = document.getElementById('clear-overrides');
-    clearBtn.disabled = Object.keys(offsetOverrides).length === 0;
+    clearBtn.disabled = Object.keys(axisOverrides).length === 0;
 }
 
 async function setZeroOffset(jointName) {
@@ -159,12 +172,128 @@ async function setZeroOffset(jointName) {
 
         if (response.ok) {
             const data = await response.json();
-            offsetOverrides[jointName] = data.offset;
+            if (!axisOverrides[jointName]) axisOverrides[jointName] = {};
+            axisOverrides[jointName].axis_offset = data.offset;
             updateOverrideButtons();
+            // Update the offset input field
+            const offsetInput = document.getElementById(`offset-${jointName}`);
+            if (offsetInput) offsetInput.value = data.offset;
             console.log(`Set zero for ${jointName}: offset = ${data.offset}`);
         }
     } catch (error) {
         console.error('Failed to set zero:', error);
+    }
+}
+
+function updateSliderAttributes() {
+    // Update slider min/max/step and settings inputs from jointsInfo
+    for (const jointName of jointNames) {
+        const info = jointsInfo[jointName] || {};
+        const sliderMin = info.slider_min !== undefined ? info.slider_min : -180;
+        const sliderMax = info.slider_max !== undefined ? info.slider_max : 180;
+        const axisScale = info.axis_scale !== undefined ? info.axis_scale : 1.0;
+        const axisOffset = info.axis_offset !== undefined ? info.axis_offset : 0.0;
+
+        const slider = document.getElementById(`slider-${jointName}`);
+        if (slider) {
+            slider.min = sliderMin;
+            slider.max = sliderMax;
+            slider.step = (sliderMax - sliderMin) / 1000;
+
+            // Clamp current value to new range
+            const currentValue = parseFloat(slider.value);
+            if (currentValue < sliderMin) slider.value = sliderMin;
+            if (currentValue > sliderMax) slider.value = sliderMax;
+        }
+
+        // Update settings inputs
+        const minInput = document.getElementById(`min-${jointName}`);
+        const maxInput = document.getElementById(`max-${jointName}`);
+        const scaleInput = document.getElementById(`scale-${jointName}`);
+        const offsetInput = document.getElementById(`offset-${jointName}`);
+
+        if (minInput) minInput.value = sliderMin;
+        if (maxInput) maxInput.value = sliderMax;
+        if (scaleInput) scaleInput.value = axisScale;
+        if (offsetInput) offsetInput.value = axisOffset;
+    }
+}
+
+async function applyAxisSettings(jointName) {
+    const minInput = document.getElementById(`min-${jointName}`);
+    const maxInput = document.getElementById(`max-${jointName}`);
+    const scaleInput = document.getElementById(`scale-${jointName}`);
+    const offsetInput = document.getElementById(`offset-${jointName}`);
+
+    const params = { joint_name: jointName };
+
+    if (minInput && minInput.value !== '') {
+        params.slider_min = parseFloat(minInput.value);
+    }
+    if (maxInput && maxInput.value !== '') {
+        params.slider_max = parseFloat(maxInput.value);
+    }
+    if (scaleInput && scaleInput.value !== '') {
+        params.axis_scale = parseFloat(scaleInput.value);
+    }
+    if (offsetInput && offsetInput.value !== '') {
+        params.axis_offset = parseFloat(offsetInput.value);
+    }
+
+    try {
+        const response = await fetch('/api/axis/override', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(params)
+        });
+
+        if (response.ok) {
+            const data = await response.json();
+            axisOverrides[jointName] = data.overrides;
+
+            // Update local jointsInfo with new values
+            if (!jointsInfo[jointName]) jointsInfo[jointName] = {};
+            if (params.slider_min !== undefined) jointsInfo[jointName].slider_min = params.slider_min;
+            if (params.slider_max !== undefined) jointsInfo[jointName].slider_max = params.slider_max;
+            if (params.axis_scale !== undefined) jointsInfo[jointName].axis_scale = params.axis_scale;
+            if (params.axis_offset !== undefined) jointsInfo[jointName].axis_offset = params.axis_offset;
+
+            // Update slider min/max attributes
+            const slider = document.getElementById(`slider-${jointName}`);
+            if (slider) {
+                const info = jointsInfo[jointName];
+                const sliderMin = info.slider_min !== undefined ? info.slider_min : -180;
+                const sliderMax = info.slider_max !== undefined ? info.slider_max : 180;
+                slider.min = sliderMin;
+                slider.max = sliderMax;
+                slider.step = (sliderMax - sliderMin) / 1000;
+
+                // Clamp current value to new range
+                const currentValue = parseFloat(slider.value);
+                if (currentValue < sliderMin) slider.value = sliderMin;
+                if (currentValue > sliderMax) slider.value = sliderMax;
+
+                // In manual mode, trigger update with new scale
+                if (manualMode) {
+                    const currentScale = info.axis_scale !== undefined ? info.axis_scale : 1.0;
+                    const physicalValue = parseFloat(slider.value) * currentScale;
+                    kinematicScene.setLocalJointCoord(jointName, physicalValue);
+                    kinematicScene.updateLocal();
+                }
+            }
+
+            updateOverrideButtons();
+            console.log(`Applied settings for ${jointName}:`, params);
+        }
+    } catch (error) {
+        console.error('Failed to apply axis settings:', error);
+    }
+}
+
+function toggleAxisSettings(jointName) {
+    const settings = document.getElementById(`axis-settings-${jointName}`);
+    if (settings) {
+        settings.classList.toggle('visible');
     }
 }
 
@@ -221,6 +350,7 @@ function handleMessage(message) {
         case 'scene_init':
             console.log('=== SCENE_INIT received ===');
             console.log('Joints:', message.joints);
+            console.log('JointsInfo:', message.jointsInfo);
             console.log('Nodes:', Object.keys(message.nodes));
             console.log('Z-up:', message.zUp);
 
@@ -233,13 +363,14 @@ function handleMessage(message) {
             // Initial scene setup
             kinematicScene.initFromSceneData(message.nodes);
             jointNames = message.joints || [];
+            jointsInfo = message.jointsInfo || {};
             createJointSliders(jointNames);
 
             // Reload tree data for local calculations
             loadTreeData();
 
-            // Reload offset overrides (tree may have changed)
-            loadOffsetOverrides();
+            // Reload axis overrides (tree may have changed)
+            loadAxisOverrides();
 
             console.log('=== SCENE_INIT complete ===');
             break;
@@ -248,6 +379,16 @@ function handleMessage(message) {
             // Update poses from server (only if not in manual mode)
             if (!manualMode) {
                 kinematicScene.updateFromSceneData(message.nodes);
+            }
+            // Update jointsInfo if provided (e.g., after axis override change)
+            if (message.jointsInfo) {
+                const jointsInfoChanged = JSON.stringify(jointsInfo) !== JSON.stringify(message.jointsInfo);
+                jointsInfo = message.jointsInfo;
+                updateSliderAttributes();
+                // If axis params changed, force update even in manual mode
+                if (jointsInfoChanged && manualMode) {
+                    kinematicScene.updateFromSceneData(message.nodes);
+                }
             }
             break;
     }
@@ -261,47 +402,87 @@ function createJointSliders(joints) {
         const div = document.createElement('div');
         div.className = 'slider-group';
 
-        // Assume rotator by default, range +-180 degrees in radians
-        const min = -Math.PI;
-        const max = Math.PI;
-        const step = 0.01;
+        // Get joint info from server, use defaults if not available
+        const info = jointsInfo[jointName] || {};
+        const sliderMin = info.slider_min !== undefined ? info.slider_min : -180;
+        const sliderMax = info.slider_max !== undefined ? info.slider_max : 180;
+        const axisScale = info.axis_scale !== undefined ? info.axis_scale : 1.0;
+        const axisOffset = info.axis_offset !== undefined ? info.axis_offset : 0.0;
 
-        const hasOverride = offsetOverrides[jointName] !== undefined;
+        // Calculate step based on range
+        const range = sliderMax - sliderMin;
+        const step = range / 1000;  // 1000 steps across the range
+
+        const hasOffset = axisOverrides[jointName]?.axis_offset !== undefined;
+        const hasOverrides = axisOverrides[jointName] && Object.keys(axisOverrides[jointName]).length > 0;
 
         div.innerHTML = `
             <label>${jointName}</label>
             <div class="slider-row">
                 <input type="range"
                        id="slider-${jointName}"
-                       min="${min}"
-                       max="${max}"
+                       min="${sliderMin}"
+                       max="${sliderMax}"
                        step="${step}"
                        value="0">
-                <button class="btn-zero ${hasOverride ? 'has-override' : ''}"
-                        id="zero-${jointName}">${hasOverride ? '✓ Zero' : 'Set Zero'}</button>
+                <button class="btn-zero ${hasOffset ? 'has-override' : ''}"
+                        id="zero-${jointName}">${hasOffset ? '✓ Zero' : 'Set Zero'}</button>
+                <button class="btn-settings ${hasOverrides ? 'active' : ''}"
+                        id="settings-${jointName}">⚙</button>
             </div>
-            <span class="slider-value" id="value-${jointName}">0°</span>
+            <span class="slider-value" id="value-${jointName}">0</span>
+            <div class="axis-settings" id="axis-settings-${jointName}">
+                <div class="axis-settings-row">
+                    <label>Min:</label>
+                    <input type="number" id="min-${jointName}" value="${sliderMin}" step="any">
+                    <label>Max:</label>
+                    <input type="number" id="max-${jointName}" value="${sliderMax}" step="any">
+                </div>
+                <div class="axis-settings-row">
+                    <label>Scale:</label>
+                    <input type="number" id="scale-${jointName}" value="${axisScale}" step="any">
+                    <label>Offset:</label>
+                    <input type="number" id="offset-${jointName}" value="${axisOffset}" step="any">
+                </div>
+                <button class="btn-apply" id="apply-${jointName}">Apply</button>
+            </div>
         `;
 
         container.appendChild(div);
 
-        const slider = div.querySelector('input');
-        const valueSpan = div.querySelector('.slider-value');
-        const zeroBtn = div.querySelector('.btn-zero');
+        const slider = div.querySelector(`#slider-${jointName}`);
+        const valueSpan = div.querySelector(`#value-${jointName}`);
+        const zeroBtn = div.querySelector(`#zero-${jointName}`);
+        const settingsBtn = div.querySelector(`#settings-${jointName}`);
+        const applyBtn = div.querySelector(`#apply-${jointName}`);
 
         slider.addEventListener('input', (e) => {
-            const value = parseFloat(e.target.value);
-            valueSpan.textContent = (value * 180 / Math.PI).toFixed(1) + '°';
+            const userValue = parseFloat(e.target.value);
+            // Display value in user units (no degree symbol - units may vary)
+            valueSpan.textContent = userValue.toFixed(2);
 
             if (manualMode) {
-                // Local update
-                kinematicScene.setLocalJointCoord(jointName, value);
+                // Get current axis_scale from jointsInfo (may have been updated)
+                const info = jointsInfo[jointName] || {};
+                const currentScale = info.axis_scale !== undefined ? info.axis_scale : 1.0;
+                // Transform to physical coordinate: userValue * scale
+                // Note: offset is applied in kinematic calculation
+                const physicalValue = userValue * currentScale;
+                kinematicScene.setLocalJointCoord(jointName, physicalValue);
                 kinematicScene.updateLocal();
             }
         });
 
         zeroBtn.addEventListener('click', () => {
             setZeroOffset(jointName);
+        });
+
+        settingsBtn.addEventListener('click', () => {
+            toggleAxisSettings(jointName);
+        });
+
+        applyBtn.addEventListener('click', () => {
+            applyAxisSettings(jointName);
         });
     }
 

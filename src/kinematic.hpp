@@ -149,6 +149,8 @@ public:
     Vec3 axis{0, 0, 1};
     double axis_offset = 0.0;  // Offset added to coord before scaling
     double axis_scale = 1.0;   // Scale multiplier: effective_coord = (coord + offset) * scale
+    double slider_min = -180.0;  // Slider minimum in user units
+    double slider_max = 180.0;   // Slider maximum in user units
     double coord = 0.0;
 
     nos::trent model; // Pass through to client
@@ -189,6 +191,36 @@ public:
         if (!scale_data.is_nil())
         {
             axis_scale = scale_data.as_numer_default(1.0);
+        }
+
+        // Slider limits in user units
+        // Default: ±180 for rotator (degrees), ±1000 for actuator (mm)
+        if (type == "rotator")
+        {
+            slider_min = -180.0;
+            slider_max = 180.0;
+        }
+        else if (type == "actuator")
+        {
+            slider_min = -1000.0;
+            slider_max = 1000.0;
+        }
+        else
+        {
+            slider_min = -100.0;
+            slider_max = 100.0;
+        }
+
+        const auto &slider_min_data = data["slider_min"];
+        if (!slider_min_data.is_nil())
+        {
+            slider_min = slider_min_data.as_numer_default(slider_min);
+        }
+
+        const auto &slider_max_data = data["slider_max"];
+        if (!slider_max_data.is_nil())
+        {
+            slider_max = slider_max_data.as_numer_default(slider_max);
         }
 
         // Model data (pass through to client)
@@ -364,6 +396,24 @@ public:
             t.push_back(name);
         }
         return t;
+    }
+
+    nos::trent get_joints_info() const
+    {
+        nos::trent result;
+        result.init(nos::trent::type::dict);
+        for (const auto &[name, joint] : joints)
+        {
+            nos::trent info;
+            info.init(nos::trent::type::dict);
+            info["type"] = joint->type;
+            info["slider_min"] = joint->slider_min;
+            info["slider_max"] = joint->slider_max;
+            info["axis_scale"] = joint->axis_scale;
+            info["axis_offset"] = joint->axis_offset;
+            result[name] = std::move(info);
+        }
+        return result;
     }
 };
 

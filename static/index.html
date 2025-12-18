@@ -164,6 +164,81 @@
             background: #666;
             cursor: not-allowed;
         }
+
+        .axis-settings {
+            display: none;
+            margin-top: 8px;
+            padding: 8px;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 4px;
+            font-size: 11px;
+        }
+
+        .axis-settings.visible {
+            display: block;
+        }
+
+        .axis-settings-row {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 6px;
+            align-items: center;
+        }
+
+        .axis-settings-row label {
+            min-width: 50px;
+            color: #aaa;
+        }
+
+        .axis-settings-row input[type="number"] {
+            flex: 1;
+            background: #333;
+            border: 1px solid #555;
+            border-radius: 3px;
+            color: #fff;
+            padding: 4px 6px;
+            font-size: 11px;
+            width: 70px;
+        }
+
+        .axis-settings-row input[type="number"]:focus {
+            outline: none;
+            border-color: #4fc3f7;
+        }
+
+        .btn-settings {
+            background: #555;
+            color: #fff;
+            border: none;
+            border-radius: 3px;
+            padding: 2px 6px;
+            font-size: 10px;
+            cursor: pointer;
+        }
+
+        .btn-settings:hover {
+            background: #666;
+        }
+
+        .btn-settings.active {
+            background: #4fc3f7;
+            color: #000;
+        }
+
+        .btn-apply {
+            background: #4caf50;
+            color: #fff;
+            border: none;
+            border-radius: 3px;
+            padding: 4px 10px;
+            font-size: 11px;
+            cursor: pointer;
+            margin-top: 4px;
+        }
+
+        .btn-apply:hover {
+            background: #66bb6a;
+        }
     </style>
 </head>
 <body>
