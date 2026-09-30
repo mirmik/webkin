@@ -18,7 +18,11 @@ else()
 endif()
 
 # Optional: Crow protocol support
-find_library(CROW_LIB crow)
+if(TARGET crow)
+    set(CROW_LIB crow)
+else()
+    find_library(CROW_LIB crow)
+endif()
 if(CROW_LIB)
     message(STATUS "Found crow library: ${CROW_LIB}")
     add_definitions(-DHAVE_CROW)
@@ -32,18 +36,13 @@ set(SOURCES
     src/mqtt_listener.cpp
     src/crow_listener.cpp
     src/k3d_loader.cpp
-    ircc_resources.gen.cpp
 )
 
-# Generate embedded resources using ircc
-execute_process(COMMAND ircc resources.txt -o ircc_resources.gen.cpp --sources-cmake
-                WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-                OUTPUT_VARIABLE RESOURCE_LIST)
-add_custom_command(OUTPUT ircc_resources.gen.cpp
-    COMMAND ircc resources.txt -o ircc_resources.gen.cpp
-    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-    DEPENDS ${RESOURCE_LIST}
-)
+if(NOT COMMAND ircc_resources)
+    include("${CMAKE_CURRENT_SOURCE_DIR}/../ircc/cmake/IrccResources.cmake")
+endif()
+ircc_resources(IRCC_GENERATED_CPP)
+list(APPEND SOURCES "${IRCC_GENERATED_CPP}")
 
 # Include directories
 set(INCLUDE_DIRS
@@ -77,7 +76,6 @@ endif()
 # CrowHTTP/Asio defines (for the web server, not crow protocol)
 target_compile_definitions(${PROJECT_NAME} PRIVATE
     ASIO_STANDALONE
-    CROW_USE_BOOST=0
     CROW_DISABLE_STATIC_DIR
 )
 
